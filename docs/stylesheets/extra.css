@@ -1,0 +1,86 @@
+.md-sidebar--primary {
+    display: none;
+}
+
+/* Fix xarray dataset HTML representation in jupyter notebook renderings.
+   See https://github.com/danielfrg/mkdocs-jupyter/issues/164 */
+
+/* xarray CSS targets --jp-* (Jupyter) and --pst-* (PyData Sphinx Theme)
+   variables that don't exist in mkdocs-material. Define --xr-* directly. */
+:root,
+[data-md-color-scheme="default"] {
+  --xr-font-color0: #24292e;
+  --xr-font-color2: #586069;
+  --xr-font-color3: #6a737d;
+  --xr-border-color: #e1e4e8;
+  --xr-disabled-color: #e1e4e8;
+  --xr-background-color: #ffffff;
+  --xr-background-color-row-even: #f6f8fa;
+  --xr-background-color-row-odd: #ffffff;
+}
+
+/* mkdocs-material uses [data-md-color-scheme="slate"] for dark mode, not
+   html[data-theme="dark"] which xarray's embedded CSS targets. */
+[data-md-color-scheme="slate"] {
+  --xr-font-color0: #ffffff;
+  --xr-font-color2: #a0a0a0;
+  --xr-font-color3: #a0a0a0;
+  --xr-border-color: #404040;
+  --xr-disabled-color: #404040;
+  --xr-background-color: #1e1e1e;
+  --xr-background-color-row-even: #252525;
+  --xr-background-color-row-odd: #1e1e1e;
+}
+
+/* mkdocs-material typeset styles override display on ul/li, breaking
+   xarray's grid-based layout. Reinstate the expected display values. */
+.md-typeset pre.xr-text-repr-fallback {
+  display: none;
+}
+
+.md-typeset ul.xr-sections,
+.jupyter-wrapper .jp-OutputArea-output dl.xr-attrs {
+  display: grid;
+}
+
+.md-typeset li.xr-var-item,
+.md-typeset ul.xr-var-list {
+  display: contents;
+}
+
+.md-typeset .xr-section-details {
+  display: none;
+}
+
+.md-typeset ul.xr-dim-list li {
+  margin-bottom: 0;
+  margin-left: 0;
+}
+
+.md-typeset ul.xr-dim-list {
+  margin-bottom: 0;
+  margin-top: 0;
+}
+
+.jupyter-wrapper .jp-OutputArea-output .xr-attrs dt {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.jupyter-wrapper .jp-OutputArea-output .xr-attrs dd {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.jupyter-wrapper .jp-OutputArea-output .xr-attrs dd:hover {
+  overflow: auto;
+  width: auto;
+  z-index: 1;
+}
