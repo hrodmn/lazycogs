@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -340,17 +341,24 @@ async def open_async(  # noqa: A001
         )
         bbox_4326 = [float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))]
 
-    resolved_bands = (
-        bands
-        if bands is not None
-        else _discover_bands(
+    if bands is not None:
+        resolved_bands = bands
+    else:
+        t0 = time.perf_counter()
+        resolved_bands = _discover_bands(
             href,
             bbox=bbox_4326,
             datetime=datetime,
             filter=filter,
             ids=ids,
         )
-    )
+        logger.debug(
+            "_discover_bands took %.3fs, found %d bands",
+            time.perf_counter() - t0,
+            len(resolved_bands),
+        )
+
+    t0 = time.perf_counter()
     filter_strings, time_coords = _build_time_steps(
         href,
         bbox=bbox_4326,
@@ -358,6 +366,11 @@ async def open_async(  # noqa: A001
         filter=filter,
         ids=ids,
         temporal_grouper=grouper,
+    )
+    logger.debug(
+        "_build_time_steps took %.3fs, found %d time steps",
+        time.perf_counter() - t0,
+        len(filter_strings),
     )
 
     if not filter_strings:

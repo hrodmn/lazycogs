@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -141,7 +142,9 @@ async def _read_item_band(
     else:
         store, path = store_from_href(href)
 
+    t0 = time.perf_counter()
     geotiff = await GeoTIFF.open(path, store=store)
+    logger.debug("GeoTIFF.open %s took %.3fs", path, time.perf_counter() - t0)
 
     # Prefer the caller-supplied nodata; fall back to the value in the COG header.
     effective_nodata = nodata if nodata is not None else geotiff.nodata
@@ -159,6 +162,14 @@ async def _read_item_band(
 
     reader: GeoTIFF | Overview
     overview = _select_overview(geotiff, target_res_native)
+    if overview is not None:
+        logger.debug(
+            "Selected overview level %d (res=%.2f) for target_res=%.2f on %s",
+            geotiff.overviews.index(overview),
+            abs(overview.transform.a),
+            target_res_native,
+            path,
+        )
     reader = overview if overview is not None else geotiff
     src_width = reader.width
     src_height = reader.height
@@ -183,19 +194,35 @@ async def _read_item_band(
     if window is None:
         return None
 
+    t0 = time.perf_counter()
     raster = await reader.read(window=window)
+    logger.debug(
+        "reader.read window=%s on %s took %.3fs",
+        window,
+        path,
+        time.perf_counter() - t0,
+    )
 
     # Reproject to the destination chunk grid.
-    arr = reproject_array(
-        data=raster.data,
-        src_transform=raster.transform,
-        src_crs=geotiff.crs,
-        dst_transform=chunk_affine,
-        dst_crs=dst_crs,
-        dst_width=chunk_width,
-        dst_height=chunk_height,
-        nodata=effective_nodata,
+    # Run in a thread executor so the event loop stays free to process
+    # concurrent I/O completions from other items in the same gather.
+    # pyproj and numpy both release the GIL, so threads give real parallelism.
+    t0 = time.perf_counter()
+    loop = asyncio.get_running_loop()
+    arr = await loop.run_in_executor(
+        None,
+        lambda: reproject_array(
+            data=raster.data,
+            src_transform=raster.transform,
+            src_crs=geotiff.crs,
+            dst_transform=chunk_affine,
+            dst_crs=dst_crs,
+            dst_width=chunk_width,
+            dst_height=chunk_height,
+            nodata=effective_nodata,
+        ),
     )
+    logger.debug("reproject_array for %s took %.3fs", path, time.perf_counter() - t0)
     return arr, effective_nodata
 
 
@@ -234,7 +261,16 @@ async def async_mosaic_chunk(
     if mosaic_method is None:
         mosaic_method = FirstMethod()
 
+    logger.debug(
+        "async_mosaic_chunk band=%r %dx%d px, %d items",
+        band,
+        chunk_width,
+        chunk_height,
+        len(items),
+    )
+
     # Read all items concurrently.
+    t0 = time.perf_counter()
     results = await asyncio.gather(
         *[
             _read_item_band(
@@ -250,6 +286,12 @@ async def async_mosaic_chunk(
             for item in items
         ],
         return_exceptions=True,
+    )
+    logger.debug(
+        "asyncio.gather for %d items band=%r took %.3fs",
+        len(items),
+        band,
+        time.perf_counter() - t0,
     )
 
     for i, result in enumerate(results):

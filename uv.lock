@@ -2305,12 +2305,16 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "async-geotiff" },
-    { name = "dask" },
     { name = "numpy" },
     { name = "obstore" },
     { name = "pyproj" },
     { name = "rustac" },
     { name = "xarray" },
+]
+
+[package.optional-dependencies]
+dask = [
+    { name = "dask" },
 ]
 
 [package.dev-dependencies]
@@ -2328,13 +2332,14 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "async-geotiff", specifier = ">=0.4.0" },
-    { name = "dask", specifier = ">=2026.3.0" },
+    { name = "dask", marker = "extra == 'dask'", specifier = ">=2026.3.0" },
     { name = "numpy", specifier = ">=2.4.4" },
     { name = "obstore", specifier = ">=0.9.2" },
     { name = "pyproj", specifier = ">=3.7.2" },
     { name = "rustac", specifier = ">=0.9.9" },
     { name = "xarray", specifier = ">=2026.2.0" },
 ]
+provides-extras = ["dask"]
 
 [package.metadata.requires-dev]
 dev = [

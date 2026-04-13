@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -228,6 +229,7 @@ class StacBackendArray(BackendArray):
         for i, t_idx in enumerate(time_indices):
             date = self.dates[t_idx]
 
+            t0 = time.perf_counter()
             items = rustac.search_sync(
                 self.parquet_path,
                 bbox=chunk_bbox_4326,
@@ -236,6 +238,13 @@ class StacBackendArray(BackendArray):
                 sortby=self.sort_by,
                 filter=self.filter,
                 ids=self.ids,
+            )
+            logger.debug(
+                "rustac.search_sync band=%r date=%s returned %d items in %.3fs",
+                self.band,
+                date,
+                len(items),
+                time.perf_counter() - t0,
             )
 
             if not items:
@@ -249,6 +258,7 @@ class StacBackendArray(BackendArray):
 
             mosaic_method = self.mosaic_method_cls() if self.mosaic_method_cls else None
 
+            t0 = time.perf_counter()
             chunk = _run_coroutine(
                 async_mosaic_chunk(
                     items=items,
@@ -261,6 +271,15 @@ class StacBackendArray(BackendArray):
                     mosaic_method=mosaic_method,
                     store=self.store,
                 )
+            )
+            logger.debug(
+                "async_mosaic_chunk band=%r date=%s (%d items, %dx%d px) took %.3fs",
+                self.band,
+                date,
+                len(items),
+                chunk_width,
+                chunk_height,
+                time.perf_counter() - t0,
             )
 
             # async_mosaic_chunk returns (bands, h, w); take band 0 for
