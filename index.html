@@ -404,6 +404,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspecting-read-plans" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting read plans
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -563,6 +574,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspecting-read-plans" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting read plans
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -667,6 +689,35 @@
 <a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    <span class="n">time_period</span><span class="o">=</span><span class="s2">&quot;P1W&quot;</span><span class="p">,</span>
 <a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="p">)</span>
 </code></pre></div>
+<h2 id="inspecting-read-plans">Inspecting read plans</h2>
+<p>Before computing an array, you can ask what DuckDB queries and COG reads would
+fire without touching any pixel data. The <code>da.stac_cog.explain()</code> method runs
+the same spatial queries as <code>.compute()</code> but stops before any I/O:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">da</span> <span class="o">=</span> <span class="n">stac_cog_xarray</span><span class="o">.</span><span class="n">open</span><span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">&quot;items.parquet&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">bbox</span><span class="o">=</span><span class="p">(</span><span class="mf">380000.0</span><span class="p">,</span> <span class="mf">4928000.0</span><span class="p">,</span> <span class="mf">420000.0</span><span class="p">,</span> <span class="mf">4984000.0</span><span class="p">),</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">crs</span><span class="o">=</span><span class="s2">&quot;EPSG:32615&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">resolution</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">chunks</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;time&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="mi">512</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="mi">512</span><span class="p">},</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">)</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="c1"># Inspect without reading pixels</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">plan</span> <span class="o">=</span> <span class="n">da</span><span class="o">.</span><span class="n">stac_cog</span><span class="o">.</span><span class="n">explain</span><span class="p">()</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="nb">print</span><span class="p">(</span><span class="n">plan</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="c1"># Explain a specific slice</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">plan_subset</span> <span class="o">=</span> <span class="n">da</span><span class="o">.</span><span class="n">isel</span><span class="p">(</span><span class="n">time</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">stac_cog</span><span class="o">.</span><span class="n">explain</span><span class="p">()</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="c1"># Convert to a DataFrame for analysis</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">df</span> <span class="o">=</span> <span class="n">plan</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">()</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="n">df</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s2">&quot;band&quot;</span><span class="p">)[</span><span class="s2">&quot;n_cog_reads&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">describe</span><span class="p">()</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="c1"># Fetch COG headers to see which overview level and pixel window would be read</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="n">plan_full</span> <span class="o">=</span> <span class="n">da</span><span class="o">.</span><span class="n">stac_cog</span><span class="o">.</span><span class="n">explain</span><span class="p">(</span><span class="n">fetch_headers</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>The <code>ExplainPlan</code> returned shows how many items are matched per chunk, the
+distribution of items-per-chunk (useful for spotting over-lapping scene edges),
+and the empty-chunk fraction (useful for diagnosing sparse time series).</p>
 <h2 id="documentation">Documentation</h2>
 <ul>
 <li><a href="https://hrodmn.github.io/stac-cog-xarray/demo/">Demo notebook</a></li>
