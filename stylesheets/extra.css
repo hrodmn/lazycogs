@@ -2,6 +2,10 @@
     display: none;
 }
 
+.md-header__title {
+    display: none;
+}
+
 /* Fix xarray dataset HTML representation in jupyter notebook renderings.
    See https://github.com/danielfrg/mkdocs-jupyter/issues/164 */
 
