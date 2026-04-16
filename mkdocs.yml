@@ -5,6 +5,8 @@ repo_name: hrodmn/lazycogs
 
 theme:
   name: material
+  logo: lazycogs-white.svg
+  favicon: favicon.svg
   features:
     - navigation.tabs
     - content.code.copy
@@ -13,7 +15,7 @@ extra_css:
   - stylesheets/extra.css
 
 nav:
-  - Introduction: index.md
+  - Home: index.md
   - Demo: demo.ipynb
   - Architecture: architecture.md
   - API Reference: api.md
