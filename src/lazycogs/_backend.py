@@ -17,7 +17,7 @@ from xarray.core import indexing
 
 import rustac
 
-from lazycogs._chunk_reader import async_mosaic_chunk
+from lazycogs._chunk_reader import async_mosaic_chunk, async_mosaic_chunk_multiband
 from lazycogs._mosaic_methods import MosaicMethodBase
 
 logger = logging.getLogger(__name__)
@@ -394,9 +394,10 @@ class MultiBandStacBackendArray(BackendArray):
     def _raw_getitem(self, key: tuple[Any, ...]) -> np.ndarray:
         """Materialise the chunk identified by ``key``.
 
-        Delegates spatial/temporal I/O to each per-band
-        :class:`StacBackendArray`, then stacks the results along the band
-        axis.
+        Reads all selected bands together per time step via
+        :func:`~lazycogs._chunk_reader.async_mosaic_chunk_multiband`, issuing
+        a single ``rustac.search_sync`` query per time step and sharing
+        reprojection warp maps across bands that have identical source geometry.
 
         Args:
             key: A tuple of ``int | slice`` objects for the
@@ -408,6 +409,7 @@ class MultiBandStacBackendArray(BackendArray):
         """
         band_key, time_key, y_key, x_key = key
 
+        # -- Band dimension --------------------------------------------------
         n_bands = len(self.band_arrays)
         if isinstance(band_key, (int, np.integer)):
             band_indices: list[int] = [int(band_key)]
@@ -419,11 +421,128 @@ class MultiBandStacBackendArray(BackendArray):
             band_indices = list(range(start, stop, step))
             squeeze_band = False
 
-        results = [
-            self.band_arrays[b]._raw_getitem((time_key, y_key, x_key))
-            for b in band_indices
-        ]
+        selected_band_names = [self.band_names[b] for b in band_indices]
+        ref = self.band_arrays[band_indices[0]]
 
+        # -- Time dimension --------------------------------------------------
+        n_dates = len(ref.dates)
+        if isinstance(time_key, (int, np.integer)):
+            time_indices: list[int] = [int(time_key)]
+            squeeze_time = True
+        else:
+            t_start = time_key.start if time_key.start is not None else 0
+            t_stop = time_key.stop if time_key.stop is not None else n_dates
+            t_step = time_key.step if time_key.step is not None else 1
+            time_indices = list(range(t_start, t_stop, t_step))
+            squeeze_time = False
+
+        # -- Spatial dimensions ----------------------------------------------
+        if isinstance(y_key, (int, np.integer)):
+            yi = int(y_key)
+            y_key = slice(yi, yi + 1)
+            squeeze_y = True
+        else:
+            squeeze_y = False
+
+        if isinstance(x_key, (int, np.integer)):
+            xi = int(x_key)
+            x_key = slice(xi, xi + 1)
+            squeeze_x = True
+        else:
+            squeeze_x = False
+
+        y_start_logical = y_key.start if y_key.start is not None else 0
+        y_stop_logical = y_key.stop if y_key.stop is not None else ref.dst_height
+        x_start = x_key.start if x_key.start is not None else 0
+        x_stop = x_key.stop if x_key.stop is not None else ref.dst_width
+
+        y_start_physical = ref.dst_height - y_stop_logical
+        y_stop_physical = ref.dst_height - y_start_logical
+
+        chunk_height = y_stop_physical - y_start_physical
+        chunk_width = x_stop - x_start
+
+        chunk_affine = ref.dst_affine * Affine.translation(x_start, y_start_physical)
+        chunk_bbox_4326 = ref._chunk_bbox_4326(chunk_affine, chunk_width, chunk_height)
+
+        # -- Read all bands together per time step ---------------------------
+        fill = ref.nodata if ref.nodata is not None else 0
+        result = np.full(
+            (len(band_indices), len(time_indices), chunk_height, chunk_width),
+            fill,
+            dtype=self.dtype,
+        )
+
+        # Shared across all time steps: source tiles at the same grid position
+        # (identical src_transform + src_crs) reuse the same WarpMap.
+        warp_cache: dict = {}
+
+        for i, t_idx in enumerate(time_indices):
+            date = ref.dates[t_idx]
+
+            t0 = time.perf_counter()
+            items = rustac.search_sync(
+                ref.parquet_path,
+                bbox=chunk_bbox_4326,
+                datetime=date,
+                use_duckdb=True,
+                sortby=ref.sort_by,
+                filter=ref.filter,
+                ids=ref.ids,
+            )
+            logger.debug(
+                "rustac.search_sync bands=%r date=%s returned %d items in %.3fs",
+                selected_band_names,
+                date,
+                len(items),
+                time.perf_counter() - t0,
+            )
+
+            if not items:
+                continue
+
+            t0 = time.perf_counter()
+            chunk_data = _run_coroutine(
+                async_mosaic_chunk_multiband(
+                    items=items,
+                    bands=selected_band_names,
+                    chunk_affine=chunk_affine,
+                    dst_crs=ref.dst_crs,
+                    chunk_width=chunk_width,
+                    chunk_height=chunk_height,
+                    nodata=ref.nodata,
+                    mosaic_method_cls=ref.mosaic_method_cls,
+                    store=ref.store,
+                    max_concurrent_reads=ref.max_concurrent_reads,
+                    warp_cache=warp_cache,
+                )
+            )
+            logger.debug(
+                "async_mosaic_chunk_multiband bands=%r date=%s (%d items, %dx%d px) took %.3fs",
+                selected_band_names,
+                date,
+                len(items),
+                chunk_width,
+                chunk_height,
+                time.perf_counter() - t0,
+            )
+
+            for bi, band in enumerate(selected_band_names):
+                arr = chunk_data[band]
+                result[bi, i] = arr[0] if arr.ndim == 3 else arr
+
+        # Physical data is top-down; flip to ascending y order for xarray.
+        result = result[:, :, ::-1, :]
+
+        # result shape: (n_selected_bands, n_time, chunk_height, chunk_width)
+        # Apply squeezes in axis order: time (axis 1), band (axis 0), y (-2), x (-1).
+        out: np.ndarray = result  # type: ignore[assignment]
+        if squeeze_time:
+            out = out[:, 0, :, :]
         if squeeze_band:
-            return results[0]
-        return np.stack(results, axis=0)
+            out = out[0]
+        if squeeze_y:
+            out = np.take(out, 0, axis=-2)
+        if squeeze_x:
+            out = out[..., 0]
+        return out

@@ -9,6 +9,8 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v6
@@ -73,9 +75,36 @@ jobs:
             --benchmark-enable \
             --benchmark-save=pr-${{ github.sha }} \
             --benchmark-storage=.benchmarks \
-            --benchmark-compare=main \
+            --benchmark-compare='*_main' \
             --benchmark-compare-fail=mean:20% \
             -v
+
+      - name: Post benchmark comparison comment
+        if: >
+          github.event_name == 'pull_request' &&
+          steps.baseline-check.outputs.has_baseline == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uv run python scripts/format_benchmark_comparison.py \
+            --baseline '.benchmarks/**/*_main.json' \
+            --pr '.benchmarks/**/*_pr-*.json' \
+            > benchmark_report.md
+
+          PR=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+
+          COMMENT_ID=$(gh api "repos/$REPO/issues/$PR/comments" \
+            --jq '.[] | select(.body | startswith("<!-- lazycogs-benchmark-comparison -->")) | .id' \
+            | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api "repos/$REPO/issues/comments/$COMMENT_ID" \
+              -X PATCH -f body="$(cat benchmark_report.md)"
+          else
+            gh api "repos/$REPO/issues/$PR/comments" \
+              -X POST -f body="$(cat benchmark_report.md)"
+          fi
 
       - name: Run benchmarks (PR — no baseline, informational only)
         if: >

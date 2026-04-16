@@ -7,7 +7,7 @@ import pytest
 from affine import Affine
 from pyproj import CRS
 
-from lazycogs._backend import StacBackendArray
+from lazycogs._backend import MultiBandStacBackendArray, StacBackendArray
 from lazycogs._mosaic_methods import FirstMethod
 
 
@@ -168,3 +168,99 @@ def test_raw_getitem_chunk_affine_offset(wgs84):
     # If chunk_affine.c == 12, the bbox minx should be 12 in WGS84
     chunk_affine = arr.dst_affine * Affine.translation(2, 0)
     assert chunk_affine.c == pytest.approx(12.0)
+
+
+# ---------------------------------------------------------------------------
+# MultiBandStacBackendArray._raw_getitem
+# ---------------------------------------------------------------------------
+
+
+def _make_multiband_array(
+    crs: CRS, bands: list[str], dates: list[str] | None = None
+) -> MultiBandStacBackendArray:
+    """Return a minimal MultiBandStacBackendArray for unit testing."""
+    if dates is None:
+        dates = ["2023-01-01"]
+    band_arrays = [
+        StacBackendArray(
+            parquet_path="/tmp/fake.parquet",
+            band=b,
+            dates=dates,
+            dst_affine=Affine(1.0, 0.0, 10.0, 0.0, -1.0, 50.0),
+            dst_crs=crs,
+            bbox_4326=[10.0, 49.0, 14.0, 50.0],
+            sort_by=None,
+            filter=None,
+            ids=None,
+            dst_width=4,
+            dst_height=1,
+            dtype=np.dtype("float32"),
+            nodata=-9999.0,
+            shape=(len(dates), 1, 4),
+            mosaic_method_cls=FirstMethod,
+        )
+        for b in bands
+    ]
+    return MultiBandStacBackendArray(band_arrays=band_arrays, band_names=bands)
+
+
+def test_multiband_raw_getitem_no_items_returns_nodata(wgs84):
+    """When no items are found, all bands are filled with nodata."""
+    multi = _make_multiband_array(wgs84, ["B01", "B02"])
+
+    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+        result = multi._raw_getitem(
+            (slice(0, 2), slice(0, 1), slice(0, 1), slice(0, 4))
+        )
+
+    assert result.shape == (2, 1, 1, 4)
+    np.testing.assert_array_equal(result, -9999.0)
+
+
+def test_multiband_raw_getitem_calls_multiband_mosaic(wgs84):
+    """_raw_getitem calls async_mosaic_chunk_multiband once per time step, not per band."""
+    bands = ["B01", "B02"]
+    multi = _make_multiband_array(wgs84, bands)
+    fake_items = [
+        {"id": "item-1", "assets": {b: {"href": f"s3://b/{b}.tif"} for b in bands}}
+    ]
+
+    call_count = [0]
+
+    def _fake_run_coroutine(coro):
+        call_count[0] += 1
+        coro.close()
+        return {
+            b: np.full((1, 1, 4), float(i), dtype=np.float32)
+            for i, b in enumerate(bands)
+        }
+
+    with (
+        patch("lazycogs._backend.rustac.search_sync", return_value=fake_items),
+        patch("lazycogs._backend._run_coroutine", side_effect=_fake_run_coroutine),
+    ):
+        result = multi._raw_getitem((slice(0, 2), 0, slice(0, 1), slice(0, 4)))
+
+    # One time step → one call to async_mosaic_chunk_multiband, not two.
+    assert call_count[0] == 1
+    assert result.shape == (2, 1, 4)
+
+
+def test_multiband_raw_getitem_squeeze_band(wgs84):
+    """Integer band index squeezes the band dimension."""
+    multi = _make_multiband_array(wgs84, ["B01", "B02"])
+
+    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+        result = multi._raw_getitem((0, 0, slice(0, 1), slice(0, 4)))
+
+    assert result.shape == (1, 4)
+
+
+def test_multiband_raw_getitem_single_band_single_pixel(wgs84):
+    """All dimensions squeezed returns a scalar array."""
+    multi = _make_multiband_array(wgs84, ["B01", "B02"])
+
+    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+        result = multi._raw_getitem((0, 0, 0, 0))
+
+    assert result.shape == ()

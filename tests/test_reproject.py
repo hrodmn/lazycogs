@@ -1,11 +1,16 @@
-"""Tests for _reproject.reproject_array."""
+"""Tests for _reproject: reproject_array, compute_warp_map, apply_warp_map."""
 
 import numpy as np
 import pytest
 from affine import Affine
 from pyproj import CRS
 
-from lazycogs._reproject import reproject_array
+from lazycogs._reproject import (
+    WarpMap,
+    apply_warp_map,
+    compute_warp_map,
+    reproject_array,
+)
 
 
 @pytest.fixture
@@ -118,3 +123,68 @@ def test_partial_overlap_nodata(wgs84):
     # x=2 and x=3 overlap source (values 7); x=4 and x=5 are outside
     np.testing.assert_array_equal(out[0, 0, :2], 7.0)
     np.testing.assert_array_equal(out[0, 0, 2:], -1.0)
+
+
+# ---------------------------------------------------------------------------
+# compute_warp_map / apply_warp_map
+# ---------------------------------------------------------------------------
+
+
+def test_compute_warp_map_returns_correct_shape(wgs84):
+    """WarpMap arrays have shape (dst_height, dst_width)."""
+    transform = _make_transform(0.0, 4.0, 1.0)
+    wm = compute_warp_map(transform, wgs84, transform, wgs84, dst_width=4, dst_height=3)
+    assert isinstance(wm, WarpMap)
+    assert wm.src_col_idx.shape == (3, 4)
+    assert wm.src_row_idx.shape == (3, 4)
+
+
+def test_apply_warp_map_matches_reproject_array(wgs84):
+    """apply_warp_map with a precomputed map gives the same result as reproject_array."""
+    src_transform = _make_transform(0.0, 3.0, 1.0)
+    dst_transform = _make_transform(0.0, 3.0, 1.0)
+    data = np.arange(9, dtype=np.float32).reshape(1, 3, 3)
+
+    wm = compute_warp_map(src_transform, wgs84, dst_transform, wgs84, 3, 3)
+    out_warp = apply_warp_map(data, wm, nodata=0.0)
+    out_reproject = reproject_array(
+        data, src_transform, wgs84, dst_transform, wgs84, 3, 3, nodata=0.0
+    )
+    np.testing.assert_array_equal(out_warp, out_reproject)
+
+
+def test_apply_warp_map_reused_across_bands(wgs84):
+    """A single WarpMap applied to two bands gives the same result as reproject_array per band."""
+    transform = _make_transform(0.0, 2.0, 1.0)
+    band_a = np.full((1, 2, 2), 1.0, dtype=np.float32)
+    band_b = np.full((1, 2, 2), 2.0, dtype=np.float32)
+
+    wm = compute_warp_map(transform, wgs84, transform, wgs84, 2, 2)
+
+    out_a = apply_warp_map(band_a, wm)
+    out_b = apply_warp_map(band_b, wm)
+
+    np.testing.assert_array_equal(
+        out_a, reproject_array(band_a, transform, wgs84, transform, wgs84, 2, 2)
+    )
+    np.testing.assert_array_equal(
+        out_b, reproject_array(band_b, transform, wgs84, transform, wgs84, 2, 2)
+    )
+
+
+def test_apply_warp_map_different_src_dimensions(wgs84):
+    """apply_warp_map derives valid mask from actual data shape, not stored metadata."""
+    # Compute warp map for a 4×4 source extent.
+    src_transform = _make_transform(0.0, 4.0, 1.0)
+    dst_transform = _make_transform(0.0, 4.0, 1.0)
+    wm = compute_warp_map(src_transform, wgs84, dst_transform, wgs84, 4, 4)
+
+    # Apply to a 3×3 source array — pixels that map to row/col >= 3 should use nodata.
+    data_small = np.ones((1, 3, 3), dtype=np.float32)
+    out = apply_warp_map(data_small, wm, nodata=-1.0)
+
+    # Top-left 3×3 destination pixels map into the valid 3×3 source.
+    np.testing.assert_array_equal(out[0, :3, :3], 1.0)
+    # Bottom row and right column of destination map outside the 3×3 source.
+    np.testing.assert_array_equal(out[0, 3, :], -1.0)
+    np.testing.assert_array_equal(out[0, :, 3], -1.0)

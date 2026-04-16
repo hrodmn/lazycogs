@@ -1,4 +1,4 @@
-"""Tests for _chunk_reader helpers: _select_overview, _native_window, and async_mosaic_chunk."""
+"""Tests for _chunk_reader helpers: _select_overview, _native_window, and mosaic functions."""
 
 from __future__ import annotations
 
@@ -10,9 +10,11 @@ from affine import Affine
 from pyproj import CRS
 
 from lazycogs._chunk_reader import (
+    _apply_bands_with_warp_cache,
     _native_window,
     _select_overview,
     async_mosaic_chunk,
+    async_mosaic_chunk_multiband,
 )
 from lazycogs._mosaic_methods import FirstMethod
 
@@ -227,4 +229,206 @@ def test_async_mosaic_chunk_early_exit_skips_remaining_reads():
     # Only one batch of 5 should have been read; the mosaic fills on item 0
     # but the whole batch still runs.  Critically, the remaining 25 items
     # should NOT be read.
+    assert reads_executed[0] <= 5
+
+
+# ---------------------------------------------------------------------------
+# _apply_bands_with_warp_cache
+# ---------------------------------------------------------------------------
+
+
+def _make_raster(transform: Affine, value: float, h: int = 4, w: int = 4) -> MagicMock:
+    raster = MagicMock()
+    raster.transform = transform
+    raster.data = np.full((1, h, w), value, dtype=np.float32)
+    return raster
+
+
+def test_apply_bands_with_warp_cache_shared_geometry():
+    """Bands with the same transform/CRS share a single warp map computation."""
+    crs = CRS.from_epsg(4326)
+    transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+    dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+
+    raster_a = _make_raster(transform, 1.0)
+    raster_b = _make_raster(transform, 2.0)
+
+    warp_map_calls = []
+
+    def _spy_compute_warp_map(*args, **kwargs):
+        from lazycogs._reproject import compute_warp_map as _real
+
+        result = _real(*args, **kwargs)
+        warp_map_calls.append(True)
+        return result
+
+    with patch(
+        "lazycogs._chunk_reader.compute_warp_map", side_effect=_spy_compute_warp_map
+    ):
+        results = _apply_bands_with_warp_cache(
+            [("B01", raster_a, crs, None), ("B02", raster_b, crs, None)],
+            dst_transform,
+            crs,
+            dst_width=4,
+            dst_height=4,
+        )
+
+    # Same transform → warp map computed exactly once.
+    assert len(warp_map_calls) == 1
+    assert set(results) == {"B01", "B02"}
+    np.testing.assert_array_equal(results["B01"][0], 1.0)
+    np.testing.assert_array_equal(results["B02"][0], 2.0)
+
+
+def test_apply_bands_with_warp_cache_different_geometry():
+    """Bands with different transforms each compute their own warp map."""
+    crs = CRS.from_epsg(4326)
+    transform_a = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+    transform_b = Affine(2.0, 0.0, 0.0, 0.0, -2.0, 8.0)
+    dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+
+    raster_a = _make_raster(transform_a, 1.0)
+    raster_b = _make_raster(transform_b, 2.0, h=2, w=2)
+
+    warp_map_calls = []
+
+    def _spy_compute_warp_map(*args, **kwargs):
+        from lazycogs._reproject import compute_warp_map as _real
+
+        result = _real(*args, **kwargs)
+        warp_map_calls.append(True)
+        return result
+
+    with patch(
+        "lazycogs._chunk_reader.compute_warp_map", side_effect=_spy_compute_warp_map
+    ):
+        results = _apply_bands_with_warp_cache(
+            [("B01", raster_a, crs, None), ("B02", raster_b, crs, None)],
+            dst_transform,
+            crs,
+            dst_width=4,
+            dst_height=4,
+        )
+
+    # Different transforms → two separate warp map computations.
+    assert len(warp_map_calls) == 2
+    assert set(results) == {"B01", "B02"}
+
+
+def test_apply_bands_with_warp_cache_shared_across_calls():
+    """A shared external cache reuses warp maps across separate calls (e.g. time steps)."""
+    crs = CRS.from_epsg(4326)
+    transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+    dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+
+    raster = _make_raster(transform, 1.0)
+    shared_cache: dict = {}
+
+    warp_map_calls = []
+
+    def _spy_compute_warp_map(*args, **kwargs):
+        from lazycogs._reproject import compute_warp_map as _real
+
+        result = _real(*args, **kwargs)
+        warp_map_calls.append(True)
+        return result
+
+    with patch(
+        "lazycogs._chunk_reader.compute_warp_map", side_effect=_spy_compute_warp_map
+    ):
+        _apply_bands_with_warp_cache(
+            [("B01", raster, crs, None)],
+            dst_transform,
+            crs,
+            dst_width=4,
+            dst_height=4,
+            warp_cache=shared_cache,
+        )
+        _apply_bands_with_warp_cache(
+            [("B01", raster, crs, None)],
+            dst_transform,
+            crs,
+            dst_width=4,
+            dst_height=4,
+            warp_cache=shared_cache,
+        )
+
+    # Warp map computed only once despite two separate calls.
+    assert len(warp_map_calls) == 1
+    assert len(shared_cache) == 1
+
+
+# ---------------------------------------------------------------------------
+# async_mosaic_chunk_multiband
+# ---------------------------------------------------------------------------
+
+
+def test_async_mosaic_chunk_multiband_returns_all_bands():
+    """Returns a dict with one entry per requested band."""
+    chunk_width, chunk_height = 4, 4
+    chunk_affine = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+    dst_crs = CRS.from_epsg(4326)
+    bands = ["B01", "B02", "B03"]
+
+    async def _fake_read_item_bands(*args, **kwargs):
+        return {
+            b: (np.ones((1, chunk_height, chunk_width), dtype=np.float32), None)
+            for b in bands
+        }
+
+    items = [{"id": "item-0", "assets": {}}]
+
+    with patch(
+        "lazycogs._chunk_reader._read_item_bands", side_effect=_fake_read_item_bands
+    ):
+        result = asyncio.run(
+            async_mosaic_chunk_multiband(
+                items=items,
+                bands=bands,
+                chunk_affine=chunk_affine,
+                dst_crs=dst_crs,
+                chunk_width=chunk_width,
+                chunk_height=chunk_height,
+            )
+        )
+
+    assert set(result.keys()) == set(bands)
+    for b in bands:
+        assert result[b].shape == (1, chunk_height, chunk_width)
+
+
+def test_async_mosaic_chunk_multiband_early_exit():
+    """All bands filled on first item → remaining items are skipped."""
+    chunk_width, chunk_height = 4, 4
+    chunk_affine = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+    dst_crs = CRS.from_epsg(4326)
+    bands = ["B01", "B02"]
+    reads_executed = [0]
+
+    async def _fake_read_item_bands(*args, **kwargs):
+        reads_executed[0] += 1
+        return {
+            b: (np.ones((1, chunk_height, chunk_width), dtype=np.float32), None)
+            for b in bands
+        }
+
+    items = [{"id": f"item-{i}", "assets": {}} for i in range(20)]
+
+    with patch(
+        "lazycogs._chunk_reader._read_item_bands", side_effect=_fake_read_item_bands
+    ):
+        asyncio.run(
+            async_mosaic_chunk_multiband(
+                items=items,
+                bands=bands,
+                chunk_affine=chunk_affine,
+                dst_crs=dst_crs,
+                chunk_width=chunk_width,
+                chunk_height=chunk_height,
+                mosaic_method_cls=FirstMethod,
+                max_concurrent_reads=5,
+            )
+        )
+
+    # FirstMethod fills on first item; only the first batch of 5 should run.
     assert reads_executed[0] <= 5
