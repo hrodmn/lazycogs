@@ -6,7 +6,7 @@ import threading
 from typing import Any
 from urllib.parse import urlparse
 
-from obstore.store import from_url
+from obstore.store import LocalStore, from_url
 
 _local = threading.local()
 
@@ -57,7 +57,7 @@ def path_from_href(href: str) -> str:
 
     Args:
         href: A cloud storage URL. Supported schemes: ``s3://``, ``s3a://``,
-            ``gs://``, ``http://``, ``https://``.
+            ``gs://``, ``http://``, ``https://``, ``file://``.
 
     Returns:
         The object path within the store (no leading slash).
@@ -68,10 +68,12 @@ def path_from_href(href: str) -> str:
     """
     parsed = urlparse(href)
     scheme = parsed.scheme.lower()
+    if scheme == "file":
+        return parsed.path
     if scheme not in ("s3", "s3a", "gs", "http", "https"):
         raise ValueError(
             f"Unsupported URL scheme {scheme!r} in {href!r}. "
-            "Expected one of: s3://, s3a://, gs://, http://, https://"
+            "Expected one of: s3://, s3a://, gs://, http://, https://, file://"
         )
     return parsed.path.lstrip("/")
 
@@ -97,13 +99,19 @@ def store_from_href(href: str) -> tuple[Any, str]:
     parsed = urlparse(href)
     scheme = parsed.scheme.lower()
 
+    if scheme == "file":
+        cache = _store_cache()
+        if "file://" not in cache:
+            cache["file://"] = LocalStore()
+        return cache["file://"], parsed.path
+
     if scheme in ("s3", "s3a", "gs", "http", "https"):
         root_url = f"{scheme}://{parsed.netloc}"
         path = parsed.path.lstrip("/")
     else:
         raise ValueError(
             f"Unsupported URL scheme {scheme!r} in {href!r}. "
-            "Expected one of: s3://, s3a://, gs://, http://, https://"
+            "Expected one of: s3://, s3a://, gs://, http://, https://, file://"
         )
 
     cache = _store_cache()

@@ -15,3 +15,7 @@ wheels/
 # mkdocs build output
 site/
 
+# benchmark data and results
+.benchmark_data/
+.benchmarks/
+

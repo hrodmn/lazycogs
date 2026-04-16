@@ -31,6 +31,7 @@ dev = [
     "jupyter>=1.1.1",
     "lab>=8.9",
     "pytest>=9.0.3",
+    "pytest-benchmark>=5.2.3",
 ]
 docs = [
     "mkdocs-jupyter>=0.26.2",
@@ -43,4 +44,8 @@ exclude = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-vv"
+addopts = "-vv --benchmark-disable"
+python_files = ["test_*.py", "bench_*.py"]
+markers = [
+    "benchmark: performance benchmarks (run with --benchmark-enable)",
+]
