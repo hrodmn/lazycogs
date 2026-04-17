@@ -102,19 +102,19 @@ lazycogs uses two independent concurrency controls:
 
 **`max_concurrent_reads`** (passed to `open()`, default 32) limits how many COG files are opened and read simultaneously within a single chunk. This is pure async I/O — it does not create threads. Lower it if you want to reduce peak memory per chunk or are hitting S3 request-rate limits.
 
-**`set_reproject_workers`** controls the shared thread pool used for CPU-bound reprojection (pyproj + numpy). The default is `min(os.cpu_count(), 4)`, which is conservative for shared environments like JupyterHub. On a dedicated machine you can raise it:
+**`set_reproject_workers`** controls how many threads each chunk's event loop uses for CPU-bound reprojection (pyproj + numpy). The default is `min(os.cpu_count(), 4)`. Reprojection is memory-bandwidth-bound rather than compute-bound — benchmarks show diminishing returns above 4 threads because concurrent large-array operations saturate the memory bus rather than adding throughput. Raising this beyond 4 is rarely useful.
 
-```python
-import os
-import lazycogs
-
-# use all available cores for reprojection
-lazycogs.set_reproject_workers(os.cpu_count())
-```
-
-Call this once at the start of your script or notebook, before any `open()` calls. Because the pool is process-wide and shared across all dask workers, reprojection parallelism stays bounded regardless of how many dask chunks run concurrently.
+Each chunk gets its own independent thread pool (not a shared global pool), so dask tasks do not queue behind each other for reprojection.
 
 When using dask, total concurrent COG reads across all workers equals `dask_workers × max_concurrent_reads`. On a 16-core machine with default dask worker count (16) and `max_concurrent_reads=32`, that is 512 simultaneous reads. If you hit S3 throttling or memory pressure, reduce `max_concurrent_reads` at `open()` time.
+
+For better throughput, add time or band parallelism via dask rather than raising reprojection workers:
+
+```python
+# parallelize across time steps — each step gets its own full event loop + thread pool
+da = lazycogs.open("items.parquet", ..., chunks={"time": 1})
+da.compute()
+```
 
 ## Documentation
 

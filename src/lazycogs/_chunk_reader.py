@@ -13,7 +13,6 @@ from affine import Affine
 from async_geotiff import GeoTIFF, Overview, RasterArray, Window
 from pyproj import CRS
 
-from lazycogs._executor import get_reproject_executor
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
 from lazycogs._reproject import (
     WarpMap,
@@ -219,7 +218,7 @@ async def _read_item_band(
     t0 = time.perf_counter()
     loop = asyncio.get_running_loop()
     arr = await loop.run_in_executor(
-        get_reproject_executor(),
+        None,
         lambda: reproject_array(
             data=raster.data,
             src_transform=raster.transform,
@@ -582,7 +581,7 @@ async def _read_item_bands(
     # Compute warp maps and apply, sharing maps across bands with identical geometry.
     loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(
-        get_reproject_executor(),
+        None,
         lambda: _apply_bands_with_warp_cache(
             band_rasters,
             chunk_affine,

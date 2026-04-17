@@ -1,68 +1,57 @@
-"""Shared thread pool executor for CPU-bound reprojection work."""
+"""Configure the per-event-loop thread pool size for CPU-bound reprojection work."""
 
 from __future__ import annotations
 
-import concurrent.futures
 import os
 
-_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
 _MAX_WORKERS: int | None = None
 
 
 def _default_workers() -> int:
-    """Return the default worker count: up to 4 per available CPU, capped at 4.
+    """Return the default worker count: CPUs up to a cap of 4.
 
-    Conservative by default so lazycogs does not peg all cores on a shared
-    JupyterHub.  Call :func:`set_reproject_workers` to raise the limit on
-    dedicated hardware.
+    Reprojection (pyproj + numpy) is memory-bandwidth-bound, not compute-bound.
+    Benchmarks show diminishing returns beyond 4 concurrent threads because they
+    saturate the memory bus rather than adding CPU throughput. Keep the default
+    conservative.
     """
     return min(os.cpu_count() or 4, 4)
 
 
-def get_reproject_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Return the shared reprojection thread pool, creating it on first call.
+def get_max_workers() -> int:
+    """Return the configured worker count, or the default if not set.
 
     Returns:
-        A ``ThreadPoolExecutor`` bounded to the worker count set by
-        :func:`set_reproject_workers` (default: ``min(os.cpu_count(), 4)``).
+        Number of reprojection threads each event loop will use.
 
     """
-    global _EXECUTOR, _MAX_WORKERS
-    if _EXECUTOR is None:
-        if _MAX_WORKERS is None:
-            _MAX_WORKERS = _default_workers()
-        _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-            max_workers=_MAX_WORKERS,
-            thread_name_prefix="lazycogs-reproject",
-        )
-    return _EXECUTOR
+    return _MAX_WORKERS if _MAX_WORKERS is not None else _default_workers()
 
 
 def set_reproject_workers(n: int) -> None:
-    """Set the number of threads used for CPU-bound reprojection work.
+    """Set the number of threads each chunk's event loop uses for reprojection.
 
-    Call this before any reads to tune for your environment.  The default is
-    ``min(os.cpu_count(), 4)``, which is conservative for shared environments
-    like JupyterHub.  On a dedicated machine you can raise it toward
-    ``os.cpu_count()``.
+    Each chunk read creates a fresh asyncio event loop with its own dedicated
+    ``ThreadPoolExecutor`` bounded to ``n`` workers. Dask tasks do not compete
+    for a shared pool — each task gets ``n`` independent reprojection threads.
+    Total reprojection threads at any moment is at most
+    ``n × dask_worker_count``.
 
-    Because this executor is shared across all ``lazycogs.open()`` calls in the
-    process, a single bounded pool is used for reprojection regardless of how
-    many dask workers are running concurrently.  This prevents thread
-    proliferation under heavy dask parallelism.
+    Reprojection is memory-bandwidth-bound rather than compute-bound, so values
+    above 4 typically offer no benefit and can hurt throughput due to memory
+    contention. The default is ``min(os.cpu_count(), 4)``.
+
+    To improve overall throughput, prefer adding time or band parallelism via
+    dask (``chunks={"time": 1}``) over raising this value.
 
     Args:
-        n: Number of worker threads.  Must be >= 1.
+        n: Number of worker threads per event loop.  Must be >= 1.
 
     Raises:
         ValueError: If ``n`` is less than 1.
 
     """
-    global _EXECUTOR, _MAX_WORKERS
+    global _MAX_WORKERS
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n!r}")
     _MAX_WORKERS = n
-    _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-        max_workers=n,
-        thread_name_prefix="lazycogs-reproject",
-    )
