@@ -30,15 +30,20 @@ logger = logging.getLogger(__name__)
 
 
 def _select_overview(geotiff: GeoTIFF, target_res: float) -> Overview | None:
-    """Choose the finest overview whose resolution is >= ``target_res``.
+    """Choose the coarsest overview whose resolution is <= ``target_res``.
+
+    Picks the finest source data that avoids upsampling: the selected
+    overview's pixel size is no larger than the output pixel size, so each
+    output pixel samples at least as much original detail as it represents.
+    This preserves spatial variation rather than smearing it with a coarser
+    overview level.
 
     Args:
         geotiff: Open GeoTIFF object.
         target_res: Target pixel size in the COG's native CRS units.
 
     Returns:
-        An ``Overview`` instance, or ``None`` to indicate the full-resolution
-        image should be used.
+        An ``Overview`` instance, or ``None`` to use full resolution.
 
     """
     if not geotiff.overviews:
@@ -48,14 +53,20 @@ def _select_overview(geotiff: GeoTIFF, target_res: float) -> Overview | None:
     if target_res <= native_res:
         return None
 
-    # Overviews are ordered finest → coarsest.  Find the first one whose
-    # resolution is at least as coarse as the target (no detail lost).
+    # Overviews are ordered finest → coarsest.  Walk forward as long as the
+    # overview resolution is still <= target_res.  The last qualifying entry
+    # is the coarsest overview that won't over-smooth the output.
+    selected: Overview | None = None
     for overview in geotiff.overviews:
-        if abs(overview.transform.a) >= target_res:
-            return overview
+        if abs(overview.transform.a) <= target_res:
+            selected = overview
+        else:
+            break
 
-    # All overviews are finer than target; use the coarsest to minimise I/O.
-    return geotiff.overviews[-1]
+    # selected is None when target_res falls between native_res and the finest
+    # overview (e.g. 15 m target, 10 m native, 20 m finest overview).
+    # Fall back to full resolution rather than upsampling from the overview.
+    return selected
 
 
 def _native_window(

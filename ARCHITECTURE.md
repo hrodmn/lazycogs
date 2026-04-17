@@ -99,7 +99,7 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 2. For each item:
    a. If a `store` was supplied by the caller, `path_from_href(href)` extracts just the object path within that store. Otherwise, `store_from_href(href)` returns a thread-local `obstore` store and an object path.
    b. `await GeoTIFF.open(path, store=store)` opens the COG header.
-   c. `_select_overview()` picks the finest overview whose pixel size is at least as coarse as the target resolution.
+   c. `_select_overview()` picks the coarsest overview whose pixel size is still ≤ the target resolution.
    d. `_native_window()` computes the pixel window in source space that covers the chunk bbox, clamped to the image extent.
    e. `await reader.read(window=window)` fetches the tile data.
    f. `reproject_array()` warps the read data to the destination chunk grid.
@@ -121,7 +121,7 @@ Each call to `_read_item_band()` in `_chunk_reader.py` follows a four-step pipel
 
 ### 1. Overview selection
 
-Before fetching any pixels, `_select_overview()` picks the right level of the COG's built-in pyramid. The target resolution is estimated in the source image's native CRS: if `dst_crs` differs from the COG's CRS, a 1-pixel offset at the chunk centre is transformed with pyproj to approximate the pixel size in source units. The overview list (ordered finest → coarsest) is then walked to find the first overview whose pixel size is at least as large as that target. Using a coarser-than-needed overview would lose detail; using a finer one reads more bytes than necessary. If no overview is coarse enough, or no overviews exist, full-resolution is used.
+Before fetching any pixels, `_select_overview()` picks the right level of the COG's built-in pyramid. The target resolution is estimated in the source image's native CRS: if `dst_crs` differs from the COG's CRS, a 1-pixel offset at the chunk centre is transformed with pyproj to approximate the pixel size in source units. The overview list (ordered finest → coarsest) is walked to find the coarsest overview whose pixel size is still ≤ the target — i.e. the finest source data that avoids upsampling. This preserves as much spatial detail as the output scale warrants without reading unnecessarily fine data. If no overview satisfies the condition (target falls between native and the finest overview), or no overviews exist, full-resolution is used.
 
 This is the primary resampling control: the pyramid level is chosen to match the output resolution, so the reprojection step works on roughly the right amount of data.
 
