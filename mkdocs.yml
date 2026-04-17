@@ -18,6 +18,7 @@ nav:
   - Home: index.md
   - Demo: demo.ipynb
   - Architecture: architecture.md
+  - lazycogs vs odc-stac: lazycogs-odc-stac.ipynb
   - API Reference: api.md
 
 plugins:
