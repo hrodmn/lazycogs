@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.ma as ma
 from affine import Affine
-from async_geotiff import GeoTIFF, Overview, Window
-from pyproj import CRS, Transformer
+from async_geotiff import GeoTIFF, Overview, RasterArray, Window
+from pyproj import CRS
 
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
 from lazycogs._reproject import (
     WarpMap,
+    _get_transformer,
     apply_warp_map,
     compute_warp_map,
     reproject_array,
@@ -153,14 +154,17 @@ async def _read_item_band(
 
     # Prefer the caller-supplied nodata; fall back to the value in the COG header.
     effective_nodata = nodata if nodata is not None else geotiff.nodata
+    src_crs = geotiff.crs
+    same_crs = dst_crs.equals(src_crs)
 
     # Select appropriate overview for the target resolution.
     target_res_native = abs(chunk_affine.a)
-    if not dst_crs.equals(geotiff.crs):
-        # Rough conversion: transform a 1-pixel offset at chunk centre.
+    if not same_crs:
+        # One transformer per unique (dst_crs, src_crs) pair; reused below
+        # for the bbox calculation and inside compute_warp_map.
+        t = _get_transformer(dst_crs, src_crs)
         cx = chunk_affine.c + (chunk_width / 2) * chunk_affine.a
         cy = chunk_affine.f + (chunk_height / 2) * chunk_affine.e
-        t = Transformer.from_crs(dst_crs, geotiff.crs, always_xy=True)
         x0, y0 = t.transform(cx, cy)
         x1, y1 = t.transform(cx + chunk_affine.a, cy)
         target_res_native = abs(x1 - x0)
@@ -185,11 +189,10 @@ async def _read_item_band(
     chunk_maxx = chunk_minx + chunk_width * chunk_affine.a
     chunk_miny = chunk_maxy + chunk_height * chunk_affine.e  # e is negative
 
-    if dst_crs.equals(geotiff.crs):
+    if same_crs:
         bbox_native = (chunk_minx, chunk_miny, chunk_maxx, chunk_maxy)
     else:
-        t_to_src = Transformer.from_crs(dst_crs, geotiff.crs, always_xy=True)
-        xs, ys = t_to_src.transform(
+        xs, ys = t.transform(
             [chunk_minx, chunk_maxx, chunk_minx, chunk_maxx],
             [chunk_maxy, chunk_maxy, chunk_miny, chunk_miny],
         )
@@ -380,7 +383,7 @@ async def async_mosaic_chunk(
 
 
 def _apply_bands_with_warp_cache(
-    band_rasters: list[tuple[str, object, CRS, float | None]],
+    band_rasters: list[tuple[str, RasterArray, CRS, float | None]],
     dst_transform: Affine,
     dst_crs: CRS,
     dst_width: int,
@@ -422,7 +425,7 @@ def _apply_bands_with_warp_cache(
     results: dict[str, tuple[np.ndarray, float | None]] = {}
 
     for band, raster, src_crs, effective_nodata in band_rasters:
-        cache_key = (tuple(raster.transform), src_crs.to_wkt())
+        cache_key = (tuple(raster.transform), src_crs)
         if cache_key not in cache:
             cache[cache_key] = compute_warp_map(
                 src_transform=raster.transform,
@@ -448,7 +451,7 @@ async def _read_item_bands(
     chunk_width: int,
     chunk_height: int,
     nodata: float | None,
-    store: object | None = None,
+    store: ObjectStore | None = None,
     warp_cache: dict | None = None,
 ) -> dict[str, tuple[np.ndarray, float | None]] | None:
     """Read and reproject multiple bands from one STAC item, sharing warp maps.
@@ -489,7 +492,7 @@ async def _read_item_bands(
         return None
 
     # Open all COGs concurrently for metadata.
-    async def _open_band(band: str, href: str) -> tuple[str, object, object]:
+    async def _open_band(band: str, href: str) -> tuple[str, GeoTIFF, ObjectStore]:
         if store is not None:
             path = path_from_href(href)
             geotiff = await GeoTIFF.open(path, store=store)
@@ -505,15 +508,21 @@ async def _read_item_bands(
     # Per-band: select overview, compute window.
     # Each band is handled independently so differing native resolutions or
     # extents are handled correctly.
-    band_read_plan: list[tuple[str, object, object, Window, float | None]] = []
+    band_read_plan: list[
+        tuple[str, GeoTIFF, GeoTIFF | Overview, Window, float | None, CRS]
+    ] = []
     for band, geotiff, _ in open_results:
         effective_nodata = nodata if nodata is not None else geotiff.nodata
+        src_crs = geotiff.crs
+        same_crs = dst_crs.equals(src_crs)
 
         target_res_native = abs(chunk_affine.a)
-        if not dst_crs.equals(geotiff.crs):
+        if not same_crs:
+            # One transformer per unique (dst_crs, src_crs) pair; reused below
+            # for the bbox calculation and inside compute_warp_map.
+            t = _get_transformer(dst_crs, src_crs)
             cx = chunk_affine.c + (chunk_width / 2) * chunk_affine.a
             cy = chunk_affine.f + (chunk_height / 2) * chunk_affine.e
-            t = Transformer.from_crs(dst_crs, geotiff.crs, always_xy=True)
             x0, y0 = t.transform(cx, cy)
             x1, y1 = t.transform(cx + chunk_affine.a, cy)
             target_res_native = abs(x1 - x0)
@@ -526,11 +535,10 @@ async def _read_item_bands(
         chunk_maxx = chunk_minx + chunk_width * chunk_affine.a
         chunk_miny = chunk_maxy + chunk_height * chunk_affine.e
 
-        if dst_crs.equals(geotiff.crs):
+        if same_crs:
             bbox_native = (chunk_minx, chunk_miny, chunk_maxx, chunk_maxy)
         else:
-            t_to_src = Transformer.from_crs(dst_crs, geotiff.crs, always_xy=True)
-            xs, ys = t_to_src.transform(
+            xs, ys = t.transform(
                 [chunk_minx, chunk_maxx, chunk_minx, chunk_maxx],
                 [chunk_maxy, chunk_maxy, chunk_miny, chunk_miny],
             )
@@ -545,23 +553,25 @@ async def _read_item_bands(
             )
             continue
 
-        band_read_plan.append((band, geotiff, reader, window, effective_nodata))
+        band_read_plan.append(
+            (band, geotiff, reader, window, effective_nodata, src_crs)
+        )
 
     if not band_read_plan:
         return None
 
     # Read all windows concurrently.
     async def _read_band(
-        band: str, reader: object, window: Window
-    ) -> tuple[str, object]:
+        band: str, reader: GeoTIFF | Overview, window: Window
+    ) -> tuple[str, RasterArray]:
         return band, await reader.read(window=window)
 
     read_results = await asyncio.gather(
-        *[_read_band(b, r, w) for b, _, r, w, _ in band_read_plan]
+        *[_read_band(b, r, w) for b, _, r, w, _, _ in band_read_plan]
     )
 
-    effective_nodatas = {b: n for b, _, _, _, n in band_read_plan}
-    crss = {b: g.crs for b, g, _, _, _ in band_read_plan}
+    effective_nodatas = {b: n for b, _, _, _, n, _ in band_read_plan}
+    crss = {b: c for b, _, _, _, _, c in band_read_plan}
 
     band_rasters = [
         (band, raster, crss[band], effective_nodatas[band])
@@ -593,7 +603,7 @@ async def async_mosaic_chunk_multiband(
     chunk_height: int,
     nodata: float | None = None,
     mosaic_method_cls: type[MosaicMethodBase] | None = None,
-    store: object | None = None,
+    store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
     warp_cache: dict | None = None,
 ) -> dict[str, np.ndarray]:

@@ -2,11 +2,33 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 import numpy as np
 from affine import Affine
 from pyproj import CRS, Transformer
+
+
+@functools.lru_cache(maxsize=256)
+def _get_transformer(src_crs: CRS, dst_crs: CRS) -> Transformer:
+    """Return a cached ``Transformer`` for a CRS pair.
+
+    ``Transformer.from_crs`` involves PROJ database lookups and pipeline
+    initialisation.  The same (src_crs, dst_crs) pair recurs for every item
+    in a collection, so caching avoids recreating the same object hundreds of
+    times per chunk read.  ``pyproj.CRS`` is hashable via its WKT
+    representation, and ``Transformer`` is thread-safe from PROJ 6+.
+
+    Args:
+        src_crs: Source CRS.
+        dst_crs: Destination CRS.
+
+    Returns:
+        A ``Transformer`` that maps ``src_crs`` → ``dst_crs``.
+
+    """
+    return Transformer.from_crs(src_crs, dst_crs, always_xy=True)
 
 
 @dataclass
@@ -68,7 +90,7 @@ def compute_warp_map(
     dst_xs = dst_transform.c + (col_grid + 0.5) * dst_transform.a
     dst_ys = dst_transform.f + (row_grid + 0.5) * dst_transform.e
 
-    transformer = Transformer.from_crs(dst_crs, src_crs, always_xy=True)
+    transformer = _get_transformer(dst_crs, src_crs)
     src_xs, src_ys = transformer.transform(dst_xs.ravel(), dst_ys.ravel())
 
     # ~src_transform maps (x, y) → (col_frac, row_frac).
