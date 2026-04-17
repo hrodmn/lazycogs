@@ -3,19 +3,25 @@
 
 Queries the Element84 Earth Search STAC API for Sentinel-2 items over western
 Colorado, downloads the selected band assets to a local directory, then writes
-a new parquet file with hrefs pointing to the local files.
+a new parquet file with hrefs pointing to the local files.  Also synthesises an
+expanded parquet with 24 monthly time steps (cloned from the real items, same
+asset hrefs) for concurrency benchmarks.
 
 Creates .benchmark_data/ (gitignored) with:
-  cogs/{item_id}/{band}.tif   downloaded COG files
-  benchmark_items.parquet     parquet index with file:// hrefs
+  cogs/{item_id}/{band}.tif        downloaded COG files
+  benchmark_items.parquet          parquet index with file:// hrefs
+  expanded_benchmark_items.parquet 24 synthetic time steps, same COG files
 
 Usage:
     uv run python scripts/prepare_benchmark_data.py
     uv run python scripts/prepare_benchmark_data.py --overwrite
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
+import copy
 import logging
 from pathlib import Path
 from urllib.parse import urlparse
@@ -32,6 +38,15 @@ DATETIME = "2025-07-02/2025-07-05"
 BANDS = ["red", "nir08"]
 LIMIT = 10
 
+# 24 monthly dates used for the expanded concurrency benchmark dataset.
+# One per month from 2023-01 through 2024-12, anchored to the 15th so dates
+# stay well away from month boundaries.
+SYNTHETIC_DATES = [
+    f"{year}-{month:02d}-15T12:00:00Z"
+    for year in (2023, 2024)
+    for month in range(1, 13)
+]
+
 DATA_DIR = Path(__file__).parents[1] / ".benchmark_data"
 
 
@@ -47,6 +62,34 @@ def _download(href: str, dest: Path) -> None:
     result = store.get(path)
     dest.write_bytes(result.bytes())
     logging.info("Wrote %s (%.1f MB)", dest, dest.stat().st_size / 1_048_576)
+
+
+def _expand_items(source_items: list[dict], dates: list[str]) -> list[dict]:
+    """Clone source_items across synthetic dates by round-robin assignment.
+
+    Each clone keeps the original geometry, bbox, and asset hrefs.  Only the
+    ``id`` and ``properties.datetime`` are changed.  The result has one item
+    per date, suitable for building a multi-time-step benchmark parquet without
+    downloading additional data.
+
+    Args:
+        source_items: Real STAC item dicts with local asset hrefs.
+        dates: RFC 3339 datetime strings, one per synthetic time step.
+
+    Returns:
+        List of cloned item dicts, one per date.
+
+    """
+    n = len(source_items)
+    expanded: list[dict] = []
+    for i, dt in enumerate(dates):
+        item = copy.deepcopy(source_items[i % n])
+        item["id"] = f"synthetic-{i:04d}"
+        item["properties"]["datetime"] = dt
+        item["properties"].pop("start_datetime", None)
+        item["properties"].pop("end_datetime", None)
+        expanded.append(item)
+    return expanded
 
 
 async def main(overwrite: bool = False) -> None:
@@ -91,6 +134,17 @@ async def main(overwrite: bool = False) -> None:
     out_parquet = DATA_DIR / "benchmark_items.parquet"
     rustac.write_sync(str(out_parquet), local_items)
     logging.info("Wrote benchmark parquet: %s", out_parquet)
+
+    expanded_parquet = DATA_DIR / "expanded_benchmark_items.parquet"
+    if overwrite or not expanded_parquet.exists():
+        expanded = _expand_items(local_items, SYNTHETIC_DATES)
+        rustac.write_sync(str(expanded_parquet), expanded)
+        logging.info(
+            "Wrote expanded benchmark parquet (%d time steps): %s",
+            len(SYNTHETIC_DATES),
+            expanded_parquet,
+        )
+
     logging.info(
         "Run benchmarks with: uv run pytest tests/benchmarks/ --benchmark-enable"
     )

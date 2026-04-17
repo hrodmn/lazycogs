@@ -24,6 +24,8 @@ jobs:
         with:
           path: .benchmark_data
           key: benchmark-data-${{ hashFiles('scripts/prepare_benchmark_data.py') }}
+          restore-keys: |
+            benchmark-data-
 
       - name: Prepare benchmark data
         run: uv run python scripts/prepare_benchmark_data.py

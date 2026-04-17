@@ -96,6 +96,26 @@ The `ExplainPlan` returned shows how many items are matched per chunk, the
 distribution of items-per-chunk (useful for spotting over-lapping scene edges),
 and the empty-chunk fraction (useful for diagnosing sparse time series).
 
+## Tuning concurrency
+
+lazycogs uses two independent concurrency controls:
+
+**`max_concurrent_reads`** (passed to `open()`, default 32) limits how many COG files are opened and read simultaneously within a single chunk. This is pure async I/O — it does not create threads. Lower it if you want to reduce peak memory per chunk or are hitting S3 request-rate limits.
+
+**`set_reproject_workers`** controls how many threads each chunk's event loop uses for CPU-bound reprojection (pyproj + numpy). The default is `min(os.cpu_count(), 4)`. Reprojection is memory-bandwidth-bound rather than compute-bound — benchmarks show diminishing returns above 4 threads because concurrent large-array operations saturate the memory bus rather than adding throughput. Raising this beyond 4 is rarely useful.
+
+Each chunk gets its own independent thread pool (not a shared global pool), so dask tasks do not queue behind each other for reprojection.
+
+When using dask, total concurrent COG reads across all workers equals `dask_workers × max_concurrent_reads`. On a 16-core machine with default dask worker count (16) and `max_concurrent_reads=32`, that is 512 simultaneous reads. If you hit S3 throttling or memory pressure, reduce `max_concurrent_reads` at `open()` time.
+
+For better throughput, add time parallelism via dask rather than raising reprojection workers:
+
+```python
+# parallelize across time steps — each step gets its own full event loop + thread pool
+da = lazycogs.open("items.parquet", ..., chunks={"time": 1})
+da.compute()
+```
+
 ## Documentation
 
 - [Demo notebook](https://hrodmn.github.io/lazycogs/demo/)

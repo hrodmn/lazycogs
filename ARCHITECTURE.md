@@ -25,6 +25,7 @@ src/lazycogs/
   _core.py           Entry point. open() / open_async(), band discovery, time-step building.
   _backend.py        StacBackendArray (per-band) and MultiBandStacBackendArray (4-D wrapper) — xarray BackendArray implementations that bridge xarray indexing to chunk reads.
   _chunk_reader.py   Async mosaic logic: open COGs, select overviews, read windows, reproject, mosaic.
+  _executor.py       Per-chunk reprojection thread pool configuration. Exposes set_reproject_workers() and get_max_workers(); the actual pool is created per event loop in _backend.py.
   _explain.py        Dry-run read estimator. Registers the da.lazycogs.explain() xarray accessor.
   _grid.py           Compute output affine transform and coordinate arrays from bbox + resolution.
   _reproject.py      Nearest-neighbor reprojection using pyproj Transformer + numpy fancy indexing.
@@ -154,13 +155,15 @@ There are three nested layers of concurrency in a chunk read.
 
 **asyncio (item level).** Inside a chunk's event loop, `async_mosaic_chunk` processes overlapping items in batches of `max_concurrent_reads` (configurable via `open()`, default 32). Each batch fires `_read_item_band()` concurrently via `asyncio.gather` with an `asyncio.Semaphore` enforcing the limit. COG header reads and tile fetches from `async-geotiff` are all awaitable, so the event loop multiplexes them without blocking. Batching caps peak in-flight memory and enables true early exit: if the mosaic method signals completion within a batch, subsequent batches are never issued.
 
-**Thread pool (CPU work per item).** `reproject_array` is synchronous CPU-bound work — there is no way to await it. Calling it directly in the coroutine would block the event loop and stall all other pending tile reads in the same `asyncio.gather`. Instead, each completed tile read immediately submits its reprojection to the event loop's default `ThreadPoolExecutor` via `loop.run_in_executor(None, ...)`. The event loop is then free to process the next completed tile read while earlier reprojections run in parallel on other threads.
+**Thread pool (CPU work per item).** `reproject_array` is synchronous CPU-bound work — there is no way to await it. Calling it directly in the coroutine would block the event loop and stall all other pending tile reads in the same `asyncio.gather`. Instead, each completed tile read immediately submits its reprojection to the event loop's default executor via `loop.run_in_executor(None, ...)`. The event loop is then free to process the next completed tile read while earlier reprojections run in parallel on other threads.
 
 This means I/O and CPU work overlap: reprojections for items whose tiles arrived first run while tiles for other items are still in flight.
 
 **Why threads, not a process pool.** `pyproj.Transformer.transform()` and numpy's fancy-indexing both release the GIL during their heavy inner loops. Threads therefore give real CPU parallelism here — not just interleaving — without the overhead of process spawning and array pickling that a `ProcessPoolExecutor` would require.
 
-**Thread count under dask.** `run_in_executor(None, ...)` uses the event loop's default executor, which Python sizes at `min(32, cpu_count + 4)`. Each dask worker thread calls `asyncio.run()` and gets a fresh event loop with its own executor. Under heavy parallelism the total thread count can reach `dask_workers × (cpu_count + 4)`. In practice these threads are short-lived and the OS scheduler handles it, but it is worth keeping in mind when tuning dask worker counts on memory-constrained machines.
+**Why reprojection is memory-bandwidth-bound, not compute-bound.** `compute_warp_map` builds two meshgrids the size of the output chunk, transforms all coordinates in one vectorised call, and produces large index arrays. `apply_warp_map` samples the source array with random-access fancy indexing (`out[:, valid] = data[:, row_idx[valid], col_idx[valid]]`), which produces near-constant cache misses. Both phases are dominated by memory latency and bandwidth rather than arithmetic. In practice this means CPU utilisation is low (threads stall waiting for memory), and adding more than 4 concurrent reprojection threads provides no throughput benefit — they saturate the memory bus instead.
+
+**Bounded per-loop executor.** Rather than using Python's default `min(32, cpu_count + 4)` thread count, `_run_coroutine()` installs a bounded `ThreadPoolExecutor` (default `min(os.cpu_count(), 4)`) as the default executor on each event loop it creates. This caps thread count per loop while preserving per-loop isolation: each dask task has its own independent pool and does not queue behind other tasks. The executor is automatically shut down when `asyncio.run()` closes the loop, so no threads leak. Call `lazycogs.set_reproject_workers(n)` to change the per-loop bound (see `_executor.py`).
 
 **Jupyter fallback.** Jupyter kernels run a persistent event loop, which prevents re-entrant `asyncio.run()` calls. `_run_coroutine()` detects this with `asyncio.get_running_loop()` and falls back to spawning a single-worker `ThreadPoolExecutor`, submitting `asyncio.run(coro)` to that thread so it gets its own loop. The rest of the concurrency model is unchanged.
 
@@ -184,7 +187,9 @@ The async layer already handles spatial I/O concurrency. Dask spatial chunks add
 
 ### Where dask helps
 
-**Time and band dimensions** are where dask pays off. Different time steps and different bands are fully independent, and the async layer does nothing to parallelize across them. `chunks={"time": 1}` lets dask run multiple time steps in parallel across worker threads, each with its own full-spatial-extent gather. The same applies to band chunks.
+**The time dimension** is where dask pays off. Different time steps are fully independent, and the async layer does nothing to parallelize across them. `chunks={"time": 1}` lets dask run multiple time steps in parallel across worker threads, each with its own full-spatial-extent gather.
+
+**Band dimension chunking does not help.** Within a single time step, bands are read sequentially by `MultiBandStacBackendArray`. Splitting bands into separate dask tasks (`chunks={"band": 1}`) creates the same per-task overhead as spatial chunks (separate DuckDB queries, event loop creation, executor instantiation) without a meaningful parallelism benefit. Keep all bands in a single chunk.
 
 **Memory pressure** is the other legitimate reason to add spatial chunks. If the full array does not fit in memory, spatial chunking limits how much is materialised at once even if it costs throughput.
 
@@ -194,7 +199,6 @@ The async layer already handles spatial I/O concurrency. Dask spatial chunks add
 |---|---|
 | Maximum throughput, array fits in memory | omit `chunks` (or `chunks={}`) |
 | Parallelise across time, memory is not a constraint | `{"time": 1}` |
-| Parallelise across time and band | `{"time": 1, "band": 1}` |
 | Large array that does not fit in memory | `{"time": 1, "x": N, "y": N}` with N as large as memory allows |
 
 When spatial chunks are necessary for memory reasons, making them as large as possible minimises per-chunk overhead and keeps the `asyncio.gather` fan-out wide. An alternative to adding spatial chunks is reducing `max_concurrent_reads` on `open()`: this limits peak in-flight memory per chunk without the overhead of smaller dask tasks or additional DuckDB queries.

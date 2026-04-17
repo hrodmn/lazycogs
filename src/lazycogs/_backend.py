@@ -18,6 +18,7 @@ from xarray.core import indexing
 import rustac
 
 from lazycogs._chunk_reader import async_mosaic_chunk, async_mosaic_chunk_multiband
+from lazycogs._executor import get_max_workers
 from lazycogs._mosaic_methods import MosaicMethodBase
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,13 @@ def _run_coroutine(coro: Any) -> Any:
     called from inside a running event loop (e.g. a Jupyter kernel), which does
     not allow re-entrant ``asyncio.run`` calls.
 
+    Each call installs a bounded ``ThreadPoolExecutor`` as the new event loop's
+    default executor before running the coroutine.  This caps the number of
+    reprojection threads per loop (and therefore per dask task) without sharing
+    a single pool across concurrent tasks — each task gets its own independent
+    pool, so there is no cross-task queuing.  The executor is automatically shut
+    down when ``asyncio.run()`` closes the loop.
+
     Args:
         coro: The coroutine to execute.
 
@@ -37,14 +45,25 @@ def _run_coroutine(coro: Any) -> Any:
         The return value of the coroutine.
 
     """
+
+    async def _with_bounded_executor(inner: Any) -> Any:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=get_max_workers(),
+                thread_name_prefix="lazycogs-reproject",
+            )
+        )
+        return await inner
+
     try:
         asyncio.get_running_loop()
         # Already inside a running loop — run in a fresh thread so the new
         # asyncio.run() call gets its own event loop.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            return executor.submit(asyncio.run, coro).result()
+            return executor.submit(asyncio.run, _with_bounded_executor(coro)).result()
     except RuntimeError:
-        return asyncio.run(coro)
+        return asyncio.run(_with_bounded_executor(coro))
 
 
 class _TimeCoordArray:
