@@ -187,7 +187,9 @@ The async layer already handles spatial I/O concurrency. Dask spatial chunks add
 
 ### Where dask helps
 
-**Time and band dimensions** are where dask pays off. Different time steps and different bands are fully independent, and the async layer does nothing to parallelize across them. `chunks={"time": 1}` lets dask run multiple time steps in parallel across worker threads, each with its own full-spatial-extent gather. The same applies to band chunks.
+**The time dimension** is where dask pays off. Different time steps are fully independent, and the async layer does nothing to parallelize across them. `chunks={"time": 1}` lets dask run multiple time steps in parallel across worker threads, each with its own full-spatial-extent gather.
+
+**Band dimension chunking does not help.** Within a single time step, bands are read sequentially by `MultiBandStacBackendArray`. Splitting bands into separate dask tasks (`chunks={"band": 1}`) creates the same per-task overhead as spatial chunks (separate DuckDB queries, event loop creation, executor instantiation) without a meaningful parallelism benefit. Keep all bands in a single chunk.
 
 **Memory pressure** is the other legitimate reason to add spatial chunks. If the full array does not fit in memory, spatial chunking limits how much is materialised at once even if it costs throughput.
 
@@ -197,7 +199,6 @@ The async layer already handles spatial I/O concurrency. Dask spatial chunks add
 |---|---|
 | Maximum throughput, array fits in memory | omit `chunks` (or `chunks={}`) |
 | Parallelise across time, memory is not a constraint | `{"time": 1}` |
-| Parallelise across time and band | `{"time": 1, "band": 1}` |
 | Large array that does not fit in memory | `{"time": 1, "x": N, "y": N}` with N as large as memory allows |
 
 When spatial chunks are necessary for memory reasons, making them as large as possible minimises per-chunk overhead and keeps the `asyncio.gather` fan-out wide. An alternative to adding spatial chunks is reducing `max_concurrent_reads` on `open()`: this limits peak in-flight memory per chunk without the overhead of smaller dask tasks or additional DuckDB queries.

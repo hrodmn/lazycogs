@@ -108,7 +108,7 @@ Each chunk gets its own independent thread pool (not a shared global pool), so d
 
 When using dask, total concurrent COG reads across all workers equals `dask_workers × max_concurrent_reads`. On a 16-core machine with default dask worker count (16) and `max_concurrent_reads=32`, that is 512 simultaneous reads. If you hit S3 throttling or memory pressure, reduce `max_concurrent_reads` at `open()` time.
 
-For better throughput, add time or band parallelism via dask rather than raising reprojection workers:
+For better throughput, add time parallelism via dask rather than raising reprojection workers:
 
 ```python
 # parallelize across time steps — each step gets its own full event loop + thread pool
