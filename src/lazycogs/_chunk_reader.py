@@ -38,6 +38,21 @@ def _log_batch_failure(
     )
 
 
+def _array_to_masked(arr: np.ndarray, effective_nodata: float | None) -> ma.MaskedArray:
+    """Wrap ``arr`` in a MaskedArray, masking pixels equal to ``effective_nodata``.
+
+    A pixel is masked only when *all* bands equal ``effective_nodata`` (so a
+    valid pixel in any band keeps the position unmasked). When
+    ``effective_nodata`` is ``None``, nothing is masked.
+    """
+    if effective_nodata is None:
+        mask = np.zeros(arr.shape, dtype=bool)
+    else:
+        per_pixel = np.all(arr == effective_nodata, axis=0, keepdims=True)
+        mask = np.broadcast_to(per_pixel, arr.shape).copy()
+    return ma.MaskedArray(arr, mask=mask)
+
+
 def _select_overview(geotiff: GeoTIFF, target_res: float) -> Overview | None:
     """Choose the coarsest overview whose resolution is <= ``target_res``.
 
@@ -363,14 +378,7 @@ async def async_mosaic_chunk(
                 continue
 
             arr, effective_nodata = result
-            arr_mask: np.ndarray
-            if effective_nodata is not None:
-                arr_mask = np.all(arr == effective_nodata, axis=0, keepdims=True)
-                arr_mask = np.broadcast_to(arr_mask, arr.shape).copy()
-            else:
-                arr_mask = np.zeros(arr.shape, dtype=bool)
-
-            mosaic_method.feed(ma.MaskedArray(arr, mask=arr_mask))
+            mosaic_method.feed(_array_to_masked(arr, effective_nodata))
 
             if mosaic_method.is_done:
                 done = True
@@ -686,13 +694,7 @@ async def async_mosaic_chunk_multiband(
                 continue
 
             for band, (arr, effective_nodata) in result.items():
-                arr_mask: np.ndarray
-                if effective_nodata is not None:
-                    arr_mask = np.all(arr == effective_nodata, axis=0, keepdims=True)
-                    arr_mask = np.broadcast_to(arr_mask, arr.shape).copy()
-                else:
-                    arr_mask = np.zeros(arr.shape, dtype=bool)
-                mosaic_methods[band].feed(ma.MaskedArray(arr, mask=arr_mask))
+                mosaic_methods[band].feed(_array_to_masked(arr, effective_nodata))
 
             if all(m.is_done for m in mosaic_methods.values()):
                 done = True
