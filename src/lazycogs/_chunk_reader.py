@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _log_batch_failure(
+    label: str, key: object, item_id: str, err: BaseException
+) -> None:
+    """Log a warning for an item that failed inside an asyncio.gather batch."""
+    logger.warning(
+        "Failed to read %s %r from item %s: %s", label, key, item_id, err, exc_info=err
+    )
+
+
 def _select_overview(geotiff: GeoTIFF, target_res: float) -> Overview | None:
     """Choose the coarsest overview whose resolution is <= ``target_res``.
 
@@ -347,13 +356,8 @@ async def async_mosaic_chunk(
         for j, result in enumerate(batch_results):
             item_idx = batch_start + j
             if isinstance(result, BaseException):
-                item_id = items[item_idx].get("id", "<unknown>")
-                logger.warning(
-                    "Failed to read band %r from item %s: %s",
-                    band,
-                    item_id,
-                    result,
-                    exc_info=result,
+                _log_batch_failure(
+                    "band", band, items[item_idx].get("id", "<unknown>"), result
                 )
                 continue
 
@@ -712,13 +716,8 @@ async def async_mosaic_chunk_multiband(
         for j, result in enumerate(batch_results):
             item_idx = batch_start + j
             if isinstance(result, BaseException):
-                item_id = items[item_idx].get("id", "<unknown>")
-                logger.warning(
-                    "Failed to read bands %r from item %s: %s",
-                    bands,
-                    item_id,
-                    result,
-                    exc_info=result,
+                _log_batch_failure(
+                    "bands", bands, items[item_idx].get("id", "<unknown>"), result
                 )
                 continue
 
