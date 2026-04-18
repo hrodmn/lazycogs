@@ -428,6 +428,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#custom-object-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom object stores
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tuning-concurrency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -634,6 +645,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#custom-object-stores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom object stores
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tuning-concurrency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -785,6 +807,25 @@ the same spatial queries as <code>.compute()</code> but stops before any I/O:</p
 <p>The <code>ExplainPlan</code> returned shows how many items are matched per chunk, the
 distribution of items-per-chunk (useful for spotting over-lapping scene edges),
 and the empty-chunk fraction (useful for diagnosing sparse time series).</p>
+<h2 id="custom-object-stores">Custom object stores</h2>
+<p>By default, <code>lazycogs.open()</code> parses each asset HREF into an obstore <code>ObjectStore</code> using <a href="https://developmentseed.org/obstore/latest/api/store/from_url/"><code>obstore.store.from_url</code></a>. Native cloud schemes (<code>s3://</code>, <code>s3a://</code>, <code>gs://</code>) default to unsigned requests so public buckets work without credentials.</p>
+<p>For anything else — authenticated buckets, signed URLs, request-payer buckets, custom endpoints, MinIO, Cloudflare R2 with an API token, etc. — construct the store yourself and pass it via <code>store=</code>. Only the path portion of each HREF is then used to locate objects; the store must be rooted at the same <code>scheme://netloc</code> the HREFs point to.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">obstore.store</span><span class="w"> </span><span class="kn">import</span> <span class="n">S3Store</span><span class="p">,</span> <span class="n">GCSStore</span><span class="p">,</span> <span class="n">HTTPStore</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># Authenticated S3 (credentials from env or boto3 chain)</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">store</span> <span class="o">=</span> <span class="n">S3Store</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;my-private-bucket&quot;</span><span class="p">,</span> <span class="n">region</span><span class="o">=</span><span class="s2">&quot;us-west-2&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">da</span> <span class="o">=</span> <span class="n">lazycogs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;items.parquet&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">store</span><span class="o">=</span><span class="n">store</span><span class="p">)</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># Requester-pays S3</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">store</span> <span class="o">=</span> <span class="n">S3Store</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;usgs-landsat&quot;</span><span class="p">,</span> <span class="n">region</span><span class="o">=</span><span class="s2">&quot;us-west-2&quot;</span><span class="p">,</span> <span class="n">request_payer</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># Signed HTTPS (e.g. a SAS-token URL issued by a STAC API)</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">store</span> <span class="o">=</span> <span class="n">HTTPStore</span><span class="o">.</span><span class="n">from_url</span><span class="p">(</span><span class="s2">&quot;https://myaccount.blob.core.windows.net/container?sv=...&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="c1"># GCS with a service-account key</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="n">store</span> <span class="o">=</span> <span class="n">GCSStore</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">&quot;my-bucket&quot;</span><span class="p">,</span> <span class="n">service_account_path</span><span class="o">=</span><span class="s2">&quot;/path/to/key.json&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>See the <a href="https://developmentseed.org/obstore/latest/api/store/">obstore store docs</a> for the full set of constructors and options.</p>
 <h2 id="tuning-concurrency">Tuning concurrency</h2>
 <p>lazycogs uses two independent concurrency controls:</p>
 <p><strong><code>max_concurrent_reads</code></strong> (passed to <code>open()</code>, default 32) limits how many COG files are opened and read simultaneously within a single chunk. This is pure async I/O — it does not create threads. Lower it if you want to reduce peak memory per chunk or are hitting S3 request-rate limits.</p>
@@ -792,9 +833,9 @@ and the empty-chunk fraction (useful for diagnosing sparse time series).</p>
 <p>Each chunk gets its own independent thread pool (not a shared global pool), so dask tasks do not queue behind each other for reprojection.</p>
 <p>When using dask, total concurrent COG reads across all workers equals <code>dask_workers × max_concurrent_reads</code>. On a 16-core machine with default dask worker count (16) and <code>max_concurrent_reads=32</code>, that is 512 simultaneous reads. If you hit S3 throttling or memory pressure, reduce <code>max_concurrent_reads</code> at <code>open()</code> time.</p>
 <p>For better throughput, add time parallelism via dask rather than raising reprojection workers:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># parallelize across time steps — each step gets its own full event loop + thread pool</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">da</span> <span class="o">=</span> <span class="n">lazycogs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;items.parquet&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;time&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">da</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># parallelize across time steps — each step gets its own full event loop + thread pool</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">da</span> <span class="o">=</span> <span class="n">lazycogs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;items.parquet&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;time&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">da</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
 </code></pre></div>
 <h2 id="documentation">Documentation</h2>
 <ul>

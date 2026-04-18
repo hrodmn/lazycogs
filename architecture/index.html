@@ -1100,7 +1100,7 @@
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  _explain.py        Dry-run read estimator. Registers the da.lazycogs.explain() xarray accessor.
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  _grid.py           Compute output affine transform and coordinate arrays from bbox + resolution.
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  _reproject.py      Nearest-neighbor reprojection using pyproj Transformer + numpy fancy indexing.
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  _store.py          Parse cloud HREFs into thread-local obstore Store instances; extract object paths when a store is provided externally.
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  _store.py          Resolve cloud HREFs into obstore Store instances (or route through a user-supplied store) with a thread-local cache.
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>  _temporal.py       Temporal grouping strategies (day, week, month, year, fixed-day-count).
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  _mosaic_methods.py Pixel-selection strategies (First, Highest, Lowest, Mean, Median, Stdev, Count).
 </code></pre></div>
@@ -1157,7 +1157,7 @@
 <ol>
 <li>Processes items in batches of <code>max_concurrent_reads</code> (default 32) using <code>asyncio.gather</code> with an <code>asyncio.Semaphore</code> to bound the number of concurrent reads. This limits peak in-flight memory when a chunk overlaps many COGs.</li>
 <li>For each item:
-   a. If a <code>store</code> was supplied by the caller, <code>path_from_href(href)</code> extracts just the object path within that store. Otherwise, <code>store_from_href(href)</code> returns a thread-local <code>obstore</code> store and an object path.
+   a. <code>resolve(href, store)</code> returns an <code>(ObjectStore, path)</code> pair. If the caller supplied a <code>store</code>, it is returned unchanged and only the object path is extracted from the HREF; otherwise <code>obstore.store.from_url</code> constructs a store from <code>scheme://netloc</code> and caches it per thread.
    b. <code>await GeoTIFF.open(path, store=store)</code> opens the COG header.
    c. <code>_select_overview()</code> picks the coarsest overview whose pixel size is still ≤ the target resolution.
    d. <code>_native_window()</code> computes the pixel window in source space that covers the chunk bbox, clamped to the image extent.
@@ -1317,8 +1317,8 @@ at <code>open()</code> time. Reach for post-hoc xarray reductions only for opera
 cannot be expressed as a per-time-step mosaic (for example, a multi-week
 mean that requires all weeks to be present before reducing).</p>
 <h2 id="store-caching-and-the-store-parameter">Store caching and the <code>store</code> parameter</h2>
-<p>By default, <code>store_from_href()</code> in <code>_store.py</code> maintains a thread-local <code>dict[str, Store]</code> keyed by root URL (<code>scheme://netloc</code>). Because dask tasks run in threads, this avoids repeated connection setup within a single task while remaining safe across concurrent tasks.</p>
-<p>When the caller supplies a pre-configured <code>ObjectStore</code> via the <code>store</code> parameter to <code>open()</code> / <code>open_async()</code>, automatic resolution is skipped entirely. The store is stored on <code>StacBackendArray</code> and forwarded through <code>async_mosaic_chunk</code> and <code>_read_item_band</code> to <code>GeoTIFF.open()</code>. Only the object path is extracted from each asset HREF via <code>path_from_href()</code>. This path is explicit — it supports custom credentials, non-default endpoints, and private buckets without relying on environment-variable detection.</p>
+<p><code>resolve()</code> in <code>_store.py</code> defers to <code>obstore.store.from_url</code> for scheme detection — including the special-case HTTPS routing for <code>amazonaws.com</code>, <code>r2.cloudflarestorage.com</code>, and Azure hosts — rather than maintaining its own list of known object-store domains. The constructed store is cached per thread in a <code>dict[str, ObjectStore]</code> keyed by root URL (<code>scheme://netloc</code>). Because dask tasks run in threads, this avoids repeated connection setup within a single task while remaining safe across concurrent tasks.</p>
+<p>Native cloud schemes (<code>s3</code>, <code>s3a</code>, <code>gs</code>) default to <code>skip_signature=True</code> so public buckets work without credentials. HTTPS URLs get no such default: if <code>from_url</code> routes <code>https://bucket.s3.amazonaws.com/...</code> to an <code>S3Store</code>, it will attempt to sign requests normally. For authenticated access or any non-default configuration, the caller is expected to construct an <code>ObjectStore</code> and pass it via the <code>store=</code> parameter to <code>open()</code> / <code>open_async()</code>; <code>resolve()</code> then returns it unchanged and only extracts the object path from each HREF. No introspection is done on a user-supplied store — the caller is responsible for ensuring it is rooted at the same <code>scheme://netloc</code> the HREFs point to.</p>
 <h2 id="key-dependencies">Key dependencies</h2>
 <table>
 <thead>
