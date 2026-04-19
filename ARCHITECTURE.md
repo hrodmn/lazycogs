@@ -49,7 +49,7 @@ src/lazycogs/
 9. Constructs the `xr.DataArray` directly from the 4-D variable. If `chunks` is provided, calls `.chunk(chunks)` to convert to a dask-backed array; otherwise the `LazilyIndexedArray` remains in play so narrow slices (e.g. a single pixel) translate to minimal I/O.
 10. Stores `_stac_backends` (the list of `StacBackendArray` instances) and `_stac_time_coords` (the full time coordinate array) in `da.attrs` so that `da.lazycogs.explain()` can reconstruct the explain plan without re-specifying `open()` parameters.
 
-`open()` is a thin synchronous wrapper that calls `asyncio.run(open_async(...))`.
+`open()` is a thin synchronous wrapper that calls `_run_coroutine(open_async(...))`, which handles both scripts and Jupyter kernels transparently (see the Jupyter fallback section).
 
 ## Explain: dry-run read estimator
 
@@ -90,7 +90,7 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 5. The chunk's EPSG:4326 bounding box is computed from the four corners of the chunk using `pyproj.Transformer`.
 6. For each time step:
    a. `rustac.search_sync(parquet_path, bbox=chunk_bbox_4326, datetime=date, use_duckdb=True)` returns only items whose geometry intersects this specific chunk for this date. Empty results short-circuit to nodata immediately.
-   b. `_run_coroutine(async_mosaic_chunk(...))` materialises the chunk. This helper uses `asyncio.run` normally, but falls back to a `ThreadPoolExecutor` worker when called from inside a running event loop (e.g. a Jupyter kernel) to avoid the "asyncio.run() cannot be called from a running event loop" error.
+   b. `_run_coroutine(async_mosaic_chunk(...))` materialises the chunk. This helper uses `asyncio.run` normally, but falls back to a `ThreadPoolExecutor` worker when called from inside a running event loop (e.g. a Jupyter kernel) to avoid the "asyncio.run() cannot be called from a running event loop" error. The same helper is used at open time, so `open()` works in Jupyter without `await`.
 7. The result array is flipped vertically (`result[:, ::-1, :]`) to restore ascending y-order before squeezing and returning.
 
 `async_mosaic_chunk` in `_chunk_reader.py`:
@@ -165,7 +165,7 @@ This means I/O and CPU work overlap: reprojections for items whose tiles arrived
 
 **Bounded per-loop executor.** Rather than using Python's default `min(32, cpu_count + 4)` thread count, `_run_coroutine()` installs a bounded `ThreadPoolExecutor` (default `min(os.cpu_count(), 4)`) as the default executor on each event loop it creates. This caps thread count per loop while preserving per-loop isolation: each dask task has its own independent pool and does not queue behind other tasks. The executor is automatically shut down when `asyncio.run()` closes the loop, so no threads leak. Call `lazycogs.set_reproject_workers(n)` to change the per-loop bound (see `_executor.py`).
 
-**Jupyter fallback.** Jupyter kernels run a persistent event loop, which prevents re-entrant `asyncio.run()` calls. `_run_coroutine()` detects this with `asyncio.get_running_loop()` and falls back to spawning a single-worker `ThreadPoolExecutor`, submitting `asyncio.run(coro)` to that thread so it gets its own loop. The rest of the concurrency model is unchanged.
+**Jupyter fallback.** Jupyter kernels run a persistent event loop, which prevents re-entrant `asyncio.run()` calls. `_run_coroutine()` detects this with `asyncio.get_running_loop()` and falls back to spawning a single-worker `ThreadPoolExecutor`, submitting `asyncio.run(coro)` to that thread so it gets its own loop. The rest of the concurrency model is unchanged. One consequence: credential providers that hold event-loop-bound resources (such as `NasaEarthdataAsyncCredentialProvider`, which creates an `aiohttp` session at construction time) fail in this path because the session is bound to Jupyter's loop, not the worker thread's loop. Use the synchronous credential provider equivalents (e.g. `NasaEarthdataCredentialProvider`) instead.
 
 ## Chunking strategy and throughput tradeoffs
 
@@ -263,6 +263,10 @@ mean that requires all weeks to be present before reducing).
 `resolve()` in `_store.py` defers to `obstore.store.from_url` for scheme detection — including the special-case HTTPS routing for `amazonaws.com`, `r2.cloudflarestorage.com`, and Azure hosts — rather than maintaining its own list of known object-store domains. The constructed store is cached per thread in a `dict[str, ObjectStore]` keyed by root URL (`scheme://netloc`). Because dask tasks run in threads, this avoids repeated connection setup within a single task while remaining safe across concurrent tasks.
 
 Native cloud schemes (`s3`, `s3a`, `gs`) default to `skip_signature=True` so public buckets work without credentials. HTTPS URLs get no such default: if `from_url` routes `https://bucket.s3.amazonaws.com/...` to an `S3Store`, it will attempt to sign requests normally. For authenticated access or any non-default configuration, the caller is expected to construct an `ObjectStore` and pass it via the `store=` parameter to `open()` / `open_async()`; `resolve()` then returns it unchanged and only extracts the object path from each HREF. No introspection is done on a user-supplied store — the caller is responsible for ensuring it is rooted at the same `scheme://netloc` the HREFs point to.
+
+`store_for(href, *, asset=None, **kwargs)` is a public convenience factory that automates this construction. It reads one sample item from the geoparquet file, extracts a data asset HREF, and calls `from_url` with the same `skip_signature=True` default as `resolve()`. If the item carries STAC Storage Extension metadata (v1.0.0 flat fields or v2.0.0 `storage:schemes`/`storage:refs`), `region` and `requester_pays` are also extracted and forwarded. Caller `kwargs` override all inferred values. The returned store is not cached — the caller owns its lifetime and passes it to `open()` via `store=`.
+
+When the store root does not align with the URL structure of the asset HREFs — for example, an Azure Blob Storage store rooted at a container while the HREFs include the container name in the path — the caller can provide a `path_from_href` callable to `open()` / `open_async()`. The callable takes the full HREF string and returns the object path to use with the store. When supplied, it replaces the default `urlparse`-based extraction in `resolve()`.
 
 ## Key dependencies
 

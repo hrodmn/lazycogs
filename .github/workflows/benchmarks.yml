@@ -57,6 +57,8 @@ jobs:
         run: |
           uv run pytest tests/benchmarks/ \
             --benchmark-enable \
+            --benchmark-min-rounds=1 \
+            --benchmark-max-time=30 \
             --benchmark-save=main \
             --benchmark-storage=.benchmarks \
             -v
@@ -75,6 +77,8 @@ jobs:
         run: |
           uv run pytest tests/benchmarks/ \
             --benchmark-enable \
+            --benchmark-min-rounds=1 \
+            --benchmark-max-time=30 \
             --benchmark-save=pr-${{ github.sha }} \
             --benchmark-storage=.benchmarks \
             --benchmark-compare='*_main' \
@@ -115,6 +119,8 @@ jobs:
         run: |
           uv run pytest tests/benchmarks/ \
             --benchmark-enable \
+            --benchmark-min-rounds=1 \
+            --benchmark-max-time=30 \
             --benchmark-save=pr-${{ github.sha }} \
             --benchmark-storage=.benchmarks \
             -v

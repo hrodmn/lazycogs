@@ -1,5 +1,6 @@
 site_name: lazycogs
 site_url: https://hrodmn.github.io/lazycogs/
+site_description: Lazy, cloud-native raster mosaics powered by STAC.
 repo_url: https://github.com/hrodmn/lazycogs
 repo_name: hrodmn/lazycogs
 
@@ -8,8 +9,10 @@ theme:
   logo: lazycogs-white.svg
   favicon: favicon.svg
   features:
-    - navigation.tabs
     - content.code.copy
+    - navigation.instant
+    - navigation.tracking
+    - search.suggest
 
 extra_css:
   - stylesheets/extra.css
@@ -19,7 +22,9 @@ nav:
   - Demo: demo.ipynb
   - Architecture: architecture.md
   - lazycogs vs odc-stac: lazycogs-odc-stac.ipynb
-  - API Reference: api.md
+  - API Reference:
+    - Open: api/open.md
+    - Mosaic Methods: api/mosaic.md
 
 plugins:
   - search
@@ -27,6 +32,15 @@ plugins:
       handlers:
         python:
           paths: [src]
+          options:
+            docstring_style: google
+            line_length: 80
+            separate_signature: true
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: false
+            show_symbol_type_toc: true
+            signature_crossrefs: true
   - mkdocs-jupyter:
       execute: false
 
@@ -35,3 +49,5 @@ markdown_extensions:
       anchor_linenums: true
   - pymdownx.superfences
   - admonition
+  - toc:
+      permalink: true

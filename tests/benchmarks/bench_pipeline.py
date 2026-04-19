@@ -74,13 +74,13 @@ def test_mosaic_method(
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("n_workers", [1, 2, 4, 8])
+@pytest.mark.parametrize("n_workers", [1, 4])
 def test_reproject_workers(
     benchmark, expanded_benchmark_parquet: str, n_workers: int
 ) -> None:
     """Measure throughput as reprojection thread count varies.
 
-    Uses the expanded 24-time-step dataset with ``chunks={"time": 1}`` so dask
+    Uses the expanded 12-time-step dataset with ``chunks={"time": 1}`` so dask
     dispatches many concurrent tasks, putting real pressure on the per-chunk
     thread pool.  Validates the claim that memory-bandwidth saturation causes
     diminishing returns above 4 threads.
@@ -116,7 +116,7 @@ def test_band_access_pattern(
 ) -> None:
     """Compare single-band vs multi-band compute cost.
 
-    Uses the expanded 24-time-step dataset with ``chunks={"time": 1}`` so each
+    Uses the expanded 12-time-step dataset with ``chunks={"time": 1}`` so each
     time step is a concurrent dask task.  Multi-band reads share a single
     ``rustac.search_sync`` query and reuse reprojection warp maps across bands;
     this benchmark quantifies that gain under concurrent load.

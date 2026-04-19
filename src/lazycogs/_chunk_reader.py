@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -196,6 +197,7 @@ async def _open_and_window(
     chunk_width: int,
     chunk_height: int,
     store: ObjectStore | None = None,
+    path_fn: Callable[[str], str] | None = None,
 ) -> tuple[GeoTIFF, GeoTIFF | Overview, Window | None, str] | None:
     """Open a COG asset and compute the pixel window covering the chunk.
 
@@ -210,7 +212,7 @@ async def _open_and_window(
         return None
 
     href = asset["href"]
-    store, path = _resolve_store(href, store)
+    store, path = _resolve_store(href, store, path_fn)
 
     t0 = time.perf_counter()
     geotiff = await GeoTIFF.open(path, store=store)
@@ -243,6 +245,7 @@ async def _read_item_band(
     chunk_height: int,
     nodata: float | None,
     store: ObjectStore | None = None,
+    path_fn: Callable[[str], str] | None = None,
 ) -> tuple[np.ndarray, float | None] | None:
     """Read and reproject one band from one STAC item.
 
@@ -252,7 +255,14 @@ async def _read_item_band(
     item has no matching asset or its footprint does not overlap the chunk.
     """
     opened = await _open_and_window(
-        item, band, chunk_affine, dst_crs, chunk_width, chunk_height, store=store
+        item,
+        band,
+        chunk_affine,
+        dst_crs,
+        chunk_width,
+        chunk_height,
+        store=store,
+        path_fn=path_fn,
     )
     if opened is None:
         return None
@@ -306,6 +316,7 @@ async def async_mosaic_chunk(
     mosaic_method: MosaicMethodBase | None = None,
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
+    path_fn: Callable[[str], str] | None = None,
 ) -> np.ndarray:
     """Read, reproject, and mosaic a single chunk from multiple STAC items.
 
@@ -330,6 +341,9 @@ async def async_mosaic_chunk(
         max_concurrent_reads: Maximum number of COG reads to run concurrently.
             Limits peak in-flight memory when a chunk overlaps many items.
             Defaults to 32.
+        path_fn: Optional callable that takes an asset HREF and returns the
+            object path to use with *store*.  Forwarded to
+            :func:`_read_item_band`.
 
     Returns:
         Array of shape ``(bands, chunk_height, chunk_width)`` with dtype
@@ -352,6 +366,7 @@ async def async_mosaic_chunk(
                 chunk_height,
                 nodata,
                 store=store,
+                path_fn=path_fn,
             )
 
     # Warn when the estimated peak in-flight memory is large. Each concurrent
@@ -482,6 +497,7 @@ async def _read_item_bands(
     nodata: float | None,
     store: ObjectStore | None = None,
     warp_cache: dict | None = None,
+    path_fn: Callable[[str], str] | None = None,
 ) -> dict[str, tuple[np.ndarray, float | None]] | None:
     """Read and reproject multiple bands from one STAC item, sharing warp maps.
 
@@ -503,6 +519,8 @@ async def _read_item_bands(
         store: Optional pre-configured obstore ``ObjectStore`` instance.
         warp_cache: Optional cache shared across calls for reusing warp maps
             computed in earlier time steps.
+        path_fn: Optional callable that takes an asset HREF and returns the
+            object path to use with *store*.
 
     Returns:
         ``dict`` mapping band name to ``(array, effective_nodata)`` where
@@ -522,7 +540,7 @@ async def _read_item_bands(
 
     # Open all COGs concurrently for metadata.
     async def _open_band(band: str, href: str) -> tuple[str, GeoTIFF, ObjectStore]:
-        band_store, path = _resolve_store(href, store)
+        band_store, path = _resolve_store(href, store, path_fn)
         geotiff = await GeoTIFF.open(path, store=band_store)
         return band, geotiff, band_store
 
@@ -602,6 +620,7 @@ async def async_mosaic_chunk_multiband(
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
     warp_cache: dict | None = None,
+    path_fn: Callable[[str], str] | None = None,
 ) -> dict[str, np.ndarray]:
     """Read, reproject, and mosaic multiple bands from a list of STAC items.
 
@@ -627,6 +646,9 @@ async def async_mosaic_chunk_multiband(
         max_concurrent_reads: Maximum number of COG reads to run concurrently.
         warp_cache: Optional cache shared across calls for reusing warp maps
             from earlier time steps.
+        path_fn: Optional callable that takes an asset HREF and returns the
+            object path to use with *store*.  Forwarded to
+            :func:`_read_item_bands`.
 
     Returns:
         ``dict`` mapping each band name to an array of shape
@@ -651,6 +673,7 @@ async def async_mosaic_chunk_multiband(
                 nodata,
                 store=store,
                 warp_cache=warp_cache,
+                path_fn=path_fn,
             )
 
     batch_size = min(max_concurrent_reads, len(items))

@@ -1,12 +1,4 @@
-# API Reference
-
-## open / open_async
-
-::: lazycogs.open
-
-::: lazycogs.open_async
-
-## Mosaic Methods
+# Mosaic Methods
 
 ::: lazycogs.MosaicMethodBase
 

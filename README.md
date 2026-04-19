@@ -30,7 +30,8 @@ pip install git+https://github.com/hrodmn/lazycogs.git
 import rustac
 import lazycogs
 
-# Search a STAC API and write results to a local geoparquet file
+# Search a STAC API and write results to a local geoparquet file.
+# rustac is async-first, so search_to requires await.
 await rustac.search_to(
     "items.parquet",
     "https://earth-search.aws.element84.com/v1",
@@ -39,8 +40,9 @@ await rustac.search_to(
     bbox=[-93.5, 44.5, -93.0, 45.0],
 )
 
-# Open the parquet file as a lazy (time, band, y, x) DataArray
-da = await lazycogs.open_async(
+# Open the parquet file as a lazy (time, band, y, x) DataArray.
+# open() works in scripts and Jupyter notebooks alike — no await needed.
+da = lazycogs.open(
     "items.parquet",
     bbox=(380000.0, 4928000.0, 420000.0, 4984000.0),
     crs="EPSG:32615",
@@ -53,12 +55,23 @@ da = await lazycogs.open_async(
 # (non-nodata) value, skipping remaining items in the week once all pixels
 # are filled. This is more efficient than post-hoc ffill or reductions over
 # a daily array, which would materialise every time step before reducing.
-da_weekly = await lazycogs.open_async(
+da_weekly = lazycogs.open(
     "items.parquet",
     bbox=(380000.0, 4928000.0, 420000.0, 4984000.0),
     crs="EPSG:32615",
     resolution=10.0,
     time_period="P1W",
+)
+```
+
+If you are already inside an async function, use `open_async` to avoid the background thread overhead:
+
+```python
+da = await lazycogs.open_async(
+    "items.parquet",
+    bbox=(380000.0, 4928000.0, 420000.0, 4984000.0),
+    crs="EPSG:32615",
+    resolution=10.0,
 )
 ```
 
@@ -125,6 +138,66 @@ store = GCSStore(bucket="my-bucket", service_account_path="/path/to/key.json")
 ```
 
 See the [obstore store docs](https://developmentseed.org/obstore/latest/api/store/) for the full set of constructors and options.
+
+### Constructing a store from your data
+
+`lazycogs.store_for()` inspects a geoparquet file and builds a matching `ObjectStore` automatically. It reads one sample item, derives the store root from a data asset HREF, and applies the same `skip_signature=True` default used by auto-resolution. If the item contains [STAC Storage Extension](https://github.com/stac-extensions/storage) metadata (v1.0.0 or v2.0.0), `region` and `requester_pays` are also inferred.
+
+```python
+# Public S3 bucket — skip_signature=True applied automatically
+store = lazycogs.store_for("items.parquet")
+da = lazycogs.open("items.parquet", ..., store=store)
+
+# Override any inferred value — caller kwargs always win
+store = lazycogs.store_for("items.parquet", skip_signature=False)
+
+# Inspect a specific asset rather than the first data asset
+store = lazycogs.store_for("items.parquet", asset="B04")
+```
+
+This is most useful when you also need `path_from_href=` — for example, a public S3 dataset where the asset paths don't align with the store root:
+
+```python
+store = lazycogs.store_for("items.parquet")
+da = lazycogs.open("items.parquet", ..., store=store, path_from_href=my_path_fn)
+```
+
+### Overriding path extraction
+
+By default, `lazycogs` extracts the object path from an asset HREF by stripping the `scheme://netloc` prefix. This works for standard S3 and GCS URLs but may not match the root of your custom store — for example, when an Azure Blob Storage store is rooted at a container but the HREFs include the container name in the path.
+
+Use `path_from_href=` to supply a callable that takes the full HREF and returns the object path your store expects:
+
+```python
+from urllib.parse import urlparse
+from obstore.store import AzureBlobStore
+
+store = AzureBlobStore(container="my-container", ...)
+
+def strip_container(href: str) -> str:
+    # href: https://account.blob.core.windows.net/my-container/path/to/file.tif
+    # store is rooted at the container level, so drop the container prefix
+    return urlparse(href).path.lstrip("/").removeprefix("my-container/")
+
+da = lazycogs.open("items.parquet", ..., store=store, path_from_href=strip_container)
+```
+
+### NASA Earthdata
+
+NASA Earthdata supports in-region direct S3 access through a temporary-credential endpoint. Use the **synchronous** `NasaEarthdataCredentialProvider` (not the async variant) when constructing the store:
+
+```python
+from obstore.auth.earthdata import NasaEarthdataCredentialProvider
+from obstore.store import S3Store
+
+cp = NasaEarthdataCredentialProvider(
+    "https://data.ornldaac.earthdata.nasa.gov/s3credentials"
+)
+store = S3Store(bucket="ornl-cumulus-prod-protected", region="us-west-2", credential_provider=cp)
+da = lazycogs.open("items.parquet", ..., store=store)
+```
+
+`NasaEarthdataAsyncCredentialProvider` is not supported. It creates an `aiohttp` session at construction time that is bound to the event loop active when it is created. lazycogs runs each chunk read in a short-lived event loop (and in Jupyter, in a separate thread with its own loop), so the session ends up attached to the wrong loop and raises a runtime error. The synchronous provider uses `requests`, which is event-loop-agnostic and works correctly in all contexts.
 
 ## Tuning concurrency
 

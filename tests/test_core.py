@@ -199,3 +199,29 @@ def test_open_invalid_time_period_raises():
             resolution=0.0001,
             time_period="bad",
         )
+
+
+def test_open_works_inside_running_event_loop(tmp_path):
+    """open() does not raise RuntimeError when called from within a running event loop."""
+    import asyncio
+
+    path = str(tmp_path / "items.parquet")
+    (tmp_path / "items.parquet").write_bytes(b"")
+
+    result: dict[str, Exception] = {}
+
+    async def _call_open() -> None:
+        try:
+            lazycogs.open(
+                path,
+                bbox=(-93.5, 44.5, -93.0, 45.0),
+                crs="EPSG:4326",
+                resolution=0.0001,
+            )
+        except RuntimeError as exc:
+            result["error"] = exc
+        except Exception:
+            pass  # rustac will error on empty file — that is fine
+
+    asyncio.run(_call_open())
+    assert "error" not in result, f"Got RuntimeError: {result.get('error')}"

@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -103,6 +104,13 @@ class StacBackendArray(BackendArray):
         max_concurrent_reads: Maximum number of COG reads to run concurrently
             per chunk.  Limits peak in-flight memory when a chunk overlaps
             many items.  Defaults to 32.
+        path_from_href: Optional callable ``(href: str) -> str`` that extracts
+            the object path from an asset HREF.  When provided, it replaces the
+            default ``urlparse``-based extraction in
+            :func:`~lazycogs._store.resolve`.  Most useful when combined with
+            a custom ``store`` whose root does not align with the URL structure
+            of the asset HREFs (e.g. Azure Blob Storage with a container-rooted
+            store).
 
     """
 
@@ -123,6 +131,7 @@ class StacBackendArray(BackendArray):
     mosaic_method_cls: type[MosaicMethodBase] | None = field(default=None)
     store: Any | None = field(default=None)
     max_concurrent_reads: int = field(default=32)
+    path_from_href: Callable[[str], str] | None = field(default=None)
 
     def __repr__(self) -> str:
         """Return a compact string representation."""
@@ -298,6 +307,7 @@ class StacBackendArray(BackendArray):
                     mosaic_method=mosaic_method,
                     store=self.store,
                     max_concurrent_reads=self.max_concurrent_reads,
+                    path_fn=self.path_from_href,
                 )
             )
             logger.debug(
@@ -503,6 +513,7 @@ class MultiBandStacBackendArray(BackendArray):
                     store=ref.store,
                     max_concurrent_reads=ref.max_concurrent_reads,
                     warp_cache=warp_cache,
+                    path_fn=ref.path_from_href,
                 )
             )
             logger.debug(

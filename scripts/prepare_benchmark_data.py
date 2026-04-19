@@ -4,13 +4,13 @@
 Queries the Element84 Earth Search STAC API for Sentinel-2 items over western
 Colorado, downloads the selected band assets to a local directory, then writes
 a new parquet file with hrefs pointing to the local files.  Also synthesises an
-expanded parquet with 24 monthly time steps (cloned from the real items, same
+expanded parquet with 12 monthly time steps (cloned from the real items, same
 asset hrefs) for concurrency benchmarks.
 
 Creates .benchmark_data/ (gitignored) with:
   cogs/{item_id}/{band}.tif        downloaded COG files
   benchmark_items.parquet          parquet index with file:// hrefs
-  expanded_benchmark_items.parquet 24 synthetic time steps, same COG files
+  expanded_benchmark_items.parquet 12 synthetic time steps, same COG files
 
 Usage:
     uv run python scripts/prepare_benchmark_data.py
@@ -38,14 +38,10 @@ DATETIME = "2025-07-02/2025-07-05"
 BANDS = ["red", "nir08"]
 LIMIT = 10
 
-# 24 monthly dates used for the expanded concurrency benchmark dataset.
-# One per month from 2023-01 through 2024-12, anchored to the 15th so dates
+# 12 monthly dates used for the expanded concurrency benchmark dataset.
+# One per month from 2024-01 through 2024-12, anchored to the 15th so dates
 # stay well away from month boundaries.
-SYNTHETIC_DATES = [
-    f"{year}-{month:02d}-15T12:00:00Z"
-    for year in (2023, 2024)
-    for month in range(1, 13)
-]
+SYNTHETIC_DATES = [f"2024-{month:02d}-15T12:00:00Z" for month in range(1, 13)]
 
 DATA_DIR = Path(__file__).parents[1] / ".benchmark_data"
 
