@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
+from rustac import DuckdbClient
 from affine import Affine
 from pyproj import CRS
 
@@ -27,6 +28,7 @@ def _make_array(crs: CRS, dates: list[str] | None = None) -> StacBackendArray:
         dates = ["2023-01-01", "2023-01-02"]
     return StacBackendArray(
         parquet_path="/tmp/fake.parquet",
+        duckdb_client=DuckdbClient(),
         band="B04",
         dates=dates,
         dst_affine=Affine(1.0, 0.0, 10.0, 0.0, -1.0, 50.0),
@@ -100,7 +102,7 @@ def test_raw_getitem_empty_items_returns_nodata(wgs84):
     """When DuckDB returns no items, the chunk is filled with nodata."""
     arr = _make_array(wgs84)
 
-    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+    with patch("rustac.DuckdbClient.search", return_value=[]):
         result = arr._raw_getitem((slice(0, 2), slice(0, 1), slice(0, 4)))
 
     assert result.shape == (2, 1, 4)
@@ -111,7 +113,7 @@ def test_raw_getitem_scalar_time_squeezes(wgs84):
     """Integer time index squeezes the time dimension from the output."""
     arr = _make_array(wgs84)
 
-    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+    with patch("rustac.DuckdbClient.search", return_value=[]):
         result = arr._raw_getitem((0, slice(0, 1), slice(0, 4)))
 
     assert result.shape == (1, 4)
@@ -125,7 +127,7 @@ def test_raw_getitem_with_items_calls_mosaic(wgs84):
     fake_chunk = np.full((1, 1, 4), 42.0, dtype=np.float32)
 
     with (
-        patch("lazycogs._backend.rustac.search_sync", return_value=fake_items),
+        patch("rustac.DuckdbClient.search", return_value=fake_items),
         patch(
             "lazycogs._backend.async_mosaic_chunk",
             new_callable=AsyncMock,
@@ -144,7 +146,7 @@ def test_raw_getitem_chunk_affine_offset(wgs84):
 
     fake_items = [{"id": "x"}]
     with (
-        patch("lazycogs._backend.rustac.search_sync", return_value=fake_items),
+        patch("rustac.DuckdbClient.search", return_value=fake_items),
         patch(
             "lazycogs._backend.async_mosaic_chunk",
             new_callable=AsyncMock,
@@ -174,6 +176,7 @@ def _make_multiband_array(
     band_arrays = [
         StacBackendArray(
             parquet_path="/tmp/fake.parquet",
+            duckdb_client=DuckdbClient(),
             band=b,
             dates=dates,
             dst_affine=Affine(1.0, 0.0, 10.0, 0.0, -1.0, 50.0),
@@ -198,7 +201,7 @@ def test_multiband_raw_getitem_no_items_returns_nodata(wgs84):
     """When no items are found, all bands are filled with nodata."""
     multi = _make_multiband_array(wgs84, ["B01", "B02"])
 
-    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+    with patch("rustac.DuckdbClient.search", return_value=[]):
         result = multi._raw_getitem(
             (slice(0, 2), slice(0, 1), slice(0, 1), slice(0, 4))
         )
@@ -226,7 +229,7 @@ def test_multiband_raw_getitem_calls_multiband_mosaic(wgs84):
         }
 
     with (
-        patch("lazycogs._backend.rustac.search_sync", return_value=fake_items),
+        patch("rustac.DuckdbClient.search", return_value=fake_items),
         patch("lazycogs._backend._run_coroutine", side_effect=_fake_run_coroutine),
     ):
         result = multi._raw_getitem((slice(0, 2), 0, slice(0, 1), slice(0, 4)))
@@ -240,7 +243,7 @@ def test_multiband_raw_getitem_squeeze_band(wgs84):
     """Integer band index squeezes the band dimension."""
     multi = _make_multiband_array(wgs84, ["B01", "B02"])
 
-    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+    with patch("rustac.DuckdbClient.search", return_value=[]):
         result = multi._raw_getitem((0, 0, slice(0, 1), slice(0, 4)))
 
     assert result.shape == (1, 4)
@@ -250,7 +253,7 @@ def test_multiband_raw_getitem_single_band_single_pixel(wgs84):
     """All dimensions squeezed returns a scalar array."""
     multi = _make_multiband_array(wgs84, ["B01", "B02"])
 
-    with patch("lazycogs._backend.rustac.search_sync", return_value=[]):
+    with patch("rustac.DuckdbClient.search", return_value=[]):
         result = multi._raw_getitem((0, 0, 0, 0))
 
     assert result.shape == ()

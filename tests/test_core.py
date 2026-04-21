@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+from rustac import DuckdbClient
 
 import lazycogs
 from lazycogs._core import _build_time_steps
@@ -77,9 +78,10 @@ _FAKE_ITEMS_TWO_MONTHS = [
 
 def test_build_time_steps_day_deduplicates_same_day():
     """Items on the same day collapse to one time step with DayGrouper."""
-    with patch("rustac.search_sync", return_value=_FAKE_ITEMS_SAME_DAY):
+    with patch("rustac.DuckdbClient.search", return_value=_FAKE_ITEMS_SAME_DAY):
         filter_strings, time_coords = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_DayGrouper(),
         )
     assert filter_strings == ["2023-01-15"]
@@ -89,9 +91,10 @@ def test_build_time_steps_day_deduplicates_same_day():
 
 def test_build_time_steps_day_two_days():
     """Items on two different days produce two time steps."""
-    with patch("rustac.search_sync", return_value=_FAKE_ITEMS_TWO_DAYS):
+    with patch("rustac.DuckdbClient.search", return_value=_FAKE_ITEMS_TWO_DAYS):
         filter_strings, time_coords = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_DayGrouper(),
         )
     assert filter_strings == ["2023-01-15", "2023-01-16"]
@@ -100,9 +103,10 @@ def test_build_time_steps_day_two_days():
 
 def test_build_time_steps_month_deduplicates_same_month():
     """Items in the same month collapse to one time step with MonthGrouper."""
-    with patch("rustac.search_sync", return_value=_FAKE_ITEMS_SAME_MONTH):
+    with patch("rustac.DuckdbClient.search", return_value=_FAKE_ITEMS_SAME_MONTH):
         filter_strings, time_coords = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_MonthGrouper(),
         )
     assert filter_strings == ["2023-01-01/2023-01-31"]
@@ -112,9 +116,10 @@ def test_build_time_steps_month_deduplicates_same_month():
 
 def test_build_time_steps_month_two_months():
     """Items in two different months produce two time steps."""
-    with patch("rustac.search_sync", return_value=_FAKE_ITEMS_TWO_MONTHS):
+    with patch("rustac.DuckdbClient.search", return_value=_FAKE_ITEMS_TWO_MONTHS):
         filter_strings, time_coords = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_MonthGrouper(),
         )
     assert len(filter_strings) == 2
@@ -129,9 +134,10 @@ def test_build_time_steps_p16d_same_bucket():
         {"properties": {"datetime": "2023-01-10T00:00:00Z"}},
         {"properties": {"datetime": "2023-01-12T00:00:00Z"}},
     ]
-    with patch("rustac.search_sync", return_value=items):
+    with patch("rustac.DuckdbClient.search", return_value=items):
         filter_strings, time_coords = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_FixedDayGrouper(16),
         )
     assert len(filter_strings) == 1
@@ -146,9 +152,10 @@ def test_build_time_steps_p16d_adjacent_buckets():
         {"properties": {"datetime": "2000-01-16T00:00:00Z"}},  # last day of bucket 0
         {"properties": {"datetime": "2000-01-17T00:00:00Z"}},  # first day of bucket 1
     ]
-    with patch("rustac.search_sync", return_value=items):
+    with patch("rustac.DuckdbClient.search", return_value=items):
         filter_strings, time_coords = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_FixedDayGrouper(16),
         )
     assert len(filter_strings) == 2
@@ -157,9 +164,10 @@ def test_build_time_steps_p16d_adjacent_buckets():
 
 def test_build_time_steps_empty_items():
     """Empty item list returns empty lists."""
-    with patch("rustac.search_sync", return_value=[]):
+    with patch("rustac.DuckdbClient.search", return_value=[]):
         filter_strings, time_coords = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_DayGrouper(),
         )
     assert filter_strings == []
@@ -169,9 +177,10 @@ def test_build_time_steps_empty_items():
 def test_build_time_steps_uses_start_datetime_fallback():
     """Items with start_datetime (no datetime) are handled."""
     items = [{"properties": {"start_datetime": "2023-03-10T00:00:00Z"}}]
-    with patch("rustac.search_sync", return_value=items):
+    with patch("rustac.DuckdbClient.search", return_value=items):
         filter_strings, _ = _build_time_steps(
             "fake.parquet",
+            duckdb_client=DuckdbClient(),
             temporal_grouper=_DayGrouper(),
         )
     assert filter_strings == ["2023-03-10"]

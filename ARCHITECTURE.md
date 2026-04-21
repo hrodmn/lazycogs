@@ -4,9 +4,11 @@ lazycogs turns a geoparquet STAC item index into a lazy `(time, band, y, x)` xar
 
 ## Why parquet, not a STAC API URL
 
-`open()` accepts a path to a local geoparquet file, not a STAC API endpoint. This is intentional. When dask computes a large DataArray, it may execute hundreds of chunk tasks in parallel. If each task queried a remote STAC API directly, that would fire hundreds of concurrent HTTP requests at the API, which is both impolite and likely to trigger rate limiting or outright bans.
+`open()` accepts a path to a geoparquet file or directory, not a STAC API endpoint. This is intentional. When dask computes a large DataArray, it may execute hundreds of chunk tasks in parallel. If each task queried a remote STAC API directly, that would fire hundreds of concurrent HTTP requests at the API, which is both impolite and likely to trigger rate limiting or outright bans.
 
-Instead, the expected workflow is to run one `rustac.search_to("items.parquet", api_url, ...)` call upfront to download the matching items into a local geoparquet file, and then pass that file to `open()`. Per-chunk spatial filtering is then a fast local DuckDB query against that file, with no network traffic and no API involvement.
+Instead, the expected workflow is to run one `rustac.search_to("items.parquet", api_url, ...)` call upfront to download the matching items into a local geoparquet file, and then pass that file to `open()`. Per-chunk spatial filtering is then a fast DuckDB query, with no network traffic and no API involvement.
+
+For large pre-existing STAC archives stored as hive-partitioned parquet directories (e.g. `year=2023/month=01/...`), pass a `DuckdbClient(use_hive_partitioning=True)` via the `duckdb_client` parameter to enable DuckDB partition pruning. All internal queries use `duckdb_client.search()` regardless of whether a custom client is supplied; when `duckdb_client` is `None`, a plain `DuckdbClient()` is created automatically.
 
 ## Two-phase execution model
 
@@ -38,11 +40,11 @@ src/lazycogs/
 
 `open_async()` in `_core.py`:
 
-1. Validates that `href` is a `.parquet` or `.geoparquet` file.
+1. Resolves `duckdb_client`: if not provided, creates a plain `DuckdbClient()`. Validates that `href` ends in `.parquet`/`.geoparquet` when no client is supplied (a directory path is accepted when a custom client is passed).
 2. Parses `time_period` into a `_TemporalGrouper` (see `_temporal.py`).
 3. Converts `bbox` from the target CRS to EPSG:4326 using `pyproj.Transformer`.
-4. Calls `_discover_bands()`: queries the parquet file via `rustac.search_sync(..., use_duckdb=True, max_items=1)` to find asset keys. Assets with role `"data"` or media type `"image/tiff"` are returned first.
-5. Calls `_build_time_steps()`: queries the parquet for all matching items, extracts their datetimes, buckets them with the `_TemporalGrouper`, deduplicates, and returns sorted `(filter_strings, time_coords)` pairs. Only groups with at least one item produce a time step.
+4. Calls `_discover_bands()`: queries the parquet source via `duckdb_client.search(..., max_items=1)` to find asset keys. Assets with role `"data"` or media type `"image/tiff"` are returned first.
+5. Calls `_build_time_steps()`: queries the parquet source for all matching items, extracts their datetimes, buckets them with the `_TemporalGrouper`, deduplicates, and returns sorted `(filter_strings, time_coords)` pairs. Only groups with at least one item produce a time step.
 6. Calls `compute_output_grid()` to get the output affine transform and x/y coordinate arrays.
 7. For each band, creates a `StacBackendArray` (a dataclass) holding all the parameters needed to materialise any chunk later.
 8. Wraps all per-band arrays in a single `MultiBandStacBackendArray` with shape `(band, time, y, x)`, then wraps that in one `xarray.core.indexing.LazilyIndexedArray`. This avoids `xr.concat` (used internally by `ds.to_array()`), which would eagerly load `LazilyIndexedArray`-backed objects.
@@ -89,7 +91,7 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 4. The chunk's affine transform is derived: `chunk_affine = dst_affine * Affine.translation(x_start, y_start_physical)`.
 5. The chunk's EPSG:4326 bounding box is computed from the four corners of the chunk using `pyproj.Transformer`.
 6. For each time step:
-   a. `rustac.search_sync(parquet_path, bbox=chunk_bbox_4326, datetime=date, use_duckdb=True)` returns only items whose geometry intersects this specific chunk for this date. Empty results short-circuit to nodata immediately.
+   a. `duckdb_client.search(parquet_path, bbox=chunk_bbox_4326, datetime=date)` returns only items whose geometry intersects this specific chunk for this date. Empty results short-circuit to nodata immediately.
    b. `_run_coroutine(async_mosaic_chunk(...))` materialises the chunk. This helper uses `asyncio.run` normally, but falls back to a `ThreadPoolExecutor` worker when called from inside a running event loop (e.g. a Jupyter kernel) to avoid the "asyncio.run() cannot be called from a running event loop" error. The same helper is used at open time, so `open()` works in Jupyter without `await`.
 7. The result array is flipped vertically (`result[:, ::-1, :]`) to restore ascending y-order before squeezing and returning.
 

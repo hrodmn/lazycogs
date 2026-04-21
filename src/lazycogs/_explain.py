@@ -13,8 +13,6 @@ import xarray as xr
 from affine import Affine
 from pyproj import CRS, Transformer
 
-import rustac
-
 from lazycogs._backend import StacBackendArray, _run_coroutine
 from lazycogs._chunk_reader import _open_and_window
 
@@ -564,11 +562,10 @@ async def _explain_async(
                 chunk_bbox_4326 = _compute_chunk_bbox_4326(
                     tile_affine, actual_w, actual_h, dst_crs
                 )
-                items = rustac.search_sync(
+                items = band_backend.duckdb_client.search(
                     band_backend.parquet_path,
                     bbox=chunk_bbox_4326,
                     datetime=date_filter,
-                    use_duckdb=True,
                     sortby=band_backend.sort_by,
                     filter=band_backend.filter,
                     ids=band_backend.ids,
