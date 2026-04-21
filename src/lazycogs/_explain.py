@@ -566,7 +566,7 @@ async def _explain_async(
                     band_backend.parquet_path,
                     bbox=chunk_bbox_4326,
                     datetime=date_filter,
-                    sortby=band_backend.sort_by,
+                    sortby=band_backend.sortby,
                     filter=band_backend.filter,
                     ids=band_backend.ids,
                 )

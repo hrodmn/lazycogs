@@ -61,7 +61,7 @@ def _make_backend(
         dst_affine=affine,
         dst_crs=crs,
         bbox_4326=[0.0, 0.0, 10.0, 10.0],
-        sort_by=None,
+        sortby=None,
         filter=None,
         ids=None,
         dst_width=dst_width,
