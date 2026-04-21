@@ -207,6 +207,35 @@ da = lazycogs.open("items.parquet", ..., store=store)
 
 `NasaEarthdataAsyncCredentialProvider` is not supported. It creates an `aiohttp` session at construction time that is bound to the event loop active when it is created. lazycogs runs each chunk read in a short-lived event loop (and in Jupyter, in a separate thread with its own loop), so the session ends up attached to the wrong loop and raises a runtime error. The synchronous provider uses `requests`, which is event-loop-agnostic and works correctly in all contexts.
 
+## Hive-partitioned STAC datasets
+
+By default, lazycogs creates a plain `DuckdbClient()` and queries a single geoparquet
+file. If your STAC items are stored as a **hive-partitioned parquet directory** (e.g.
+`year=2023/month=01/...`) you can pass a pre-configured client with
+`use_hive_partitioning=True` to enable partition pruning:
+
+```python
+from rustac import DuckdbClient
+import lazycogs
+
+client = DuckdbClient(use_hive_partitioning=True)
+
+da = lazycogs.open(
+    "s3://bucket/stac/",            # directory, not a single file
+    duckdb_client=client,
+    bbox=(380000.0, 4928000.0, 420000.0, 4984000.0),
+    crs="EPSG:32615",
+    resolution=10.0,
+)
+```
+
+DuckDB skips partition directories that cannot match the spatial/temporal filters,
+which can dramatically reduce the number of parquet files scanned on large archives.
+
+You can pass any `DuckdbClient` constructor options (`extension_directory`,
+`extensions`, `install_extensions`) using the same approach. When `duckdb_client` is
+`None` (the default), lazycogs behaves exactly as before.
+
 ## Tuning concurrency
 
 lazycogs uses two independent concurrency controls:

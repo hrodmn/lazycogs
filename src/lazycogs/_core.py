@@ -8,8 +8,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import rustac
 import xarray as xr
+from rustac import DuckdbClient
 from pyproj import CRS, Transformer
 from xarray.core import indexing
 
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 def _discover_bands(
     parquet_path: str,
     *,
+    duckdb_client: DuckdbClient,
     bbox: list[float] | None = None,
     datetime: str | None = None,
     filter: str | dict[str, Any] | None = None,
@@ -60,7 +61,8 @@ def _discover_bands(
     include ``"data"`` are returned first; all others follow.
 
     Args:
-        parquet_path: Path to a local geoparquet STAC items file.
+        parquet_path: Path to a geoparquet file or hive-partitioned directory.
+        duckdb_client: ``DuckdbClient`` used to query the parquet source.
         bbox: Bounding box ``[minx, miny, maxx, maxy]`` in EPSG:4326 to
             filter the parquet before selecting a representative item.
         datetime: RFC 3339 datetime or range to filter items.
@@ -74,9 +76,8 @@ def _discover_bands(
         ValueError: If no matching STAC items are found in the parquet file.
 
     """
-    items = rustac.search_sync(
+    items = duckdb_client.search(
         parquet_path,
-        use_duckdb=True,
         max_items=1,
         bbox=bbox,
         datetime=datetime,
@@ -103,6 +104,7 @@ def _discover_bands(
 def _build_time_steps(
     parquet_path: str,
     *,
+    duckdb_client: DuckdbClient,
     bbox: list[float] | None = None,
     datetime: str | None = None,
     filter: str | dict[str, Any] | None = None,
@@ -116,24 +118,24 @@ def _build_time_steps(
     the time axis never contains empty slices.
 
     Args:
-        parquet_path: Path to a local geoparquet STAC items file.
+        parquet_path: Path to a geoparquet file or hive-partitioned directory.
+        duckdb_client: ``DuckdbClient`` used to query the parquet source.
         bbox: Bounding box ``[minx, miny, maxx, maxy]`` in EPSG:4326.
         datetime: RFC 3339 datetime or range to pre-filter items.
         filter: CQL2 filter expression (text string or JSON dict).
         ids: List of STAC item IDs to restrict results to.
         temporal_grouper: Grouper that maps item datetimes to group labels,
-            ``rustac`` datetime filter strings, and coordinate values.
+            datetime filter strings, and coordinate values.
 
     Returns:
         A ``(filter_strings, time_coords)`` tuple where *filter_strings* is
-        the list of ``rustac``-compatible datetime filter strings (one per
-        time step, sorted in temporal order) and *time_coords* is the
-        corresponding list of ``numpy.datetime64[D]`` coordinate values.
+        the list of datetime filter strings (one per time step, sorted in
+        temporal order) and *time_coords* is the corresponding list of
+        ``numpy.datetime64[D]`` coordinate values.
 
     """
-    items = rustac.search_sync(
+    items = duckdb_client.search(
         parquet_path,
-        use_duckdb=True,
         bbox=bbox,
         datetime=datetime,
         filter=filter,
@@ -155,6 +157,7 @@ def _build_time_steps(
 def _build_dataarray(
     *,
     parquet_path: str,
+    duckdb_client: DuckdbClient,
     resolved_bands: list[str],
     filter_strings: list[str],
     time_coords: list[np.datetime64],
@@ -179,7 +182,9 @@ def _build_dataarray(
     :func:`open_async` after the STAC search completes.
 
     Args:
-        parquet_path: Path to the local geoparquet file.
+        parquet_path: Path to a geoparquet file or hive-partitioned directory.
+        duckdb_client: ``DuckdbClient`` instance passed to each
+            :class:`~lazycogs._backend.StacBackendArray` for per-chunk queries.
         resolved_bands: Ordered list of band/asset keys.
         filter_strings: Sorted list of ``rustac``-compatible datetime filter
             strings, one per time step.  Passed directly to
@@ -218,6 +223,7 @@ def _build_dataarray(
     band_arrays = [
         StacBackendArray(
             parquet_path=parquet_path,
+            duckdb_client=duckdb_client,
             band=band,
             dates=filter_strings,
             dst_affine=dst_affine,
@@ -291,16 +297,16 @@ async def open_async(  # noqa: A001
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
     path_from_href: Callable[[str], str] | None = None,
+    duckdb_client: DuckdbClient | None = None,
 ) -> xr.DataArray:
     """Open a mosaic of STAC items as a lazy ``(time, band, y, x)`` DataArray.
 
     Async entry point, suitable for use with ``await`` in Jupyter notebooks
     and other async contexts.  For synchronous scripts, use :func:`open`.
 
-    ``href`` must be a path to a local geoparquet file (``.parquet`` or
-    ``.geoparquet``).  To search a STAC API first, use
-    ``rustac.search_to("items.parquet", api_url, ...)`` and pass the
-    resulting file here.
+    ``href`` must be a path to a geoparquet file (``.parquet`` or
+    ``.geoparquet``) or, when *duckdb_client* is provided, to a
+    hive-partitioned parquet directory.
 
     Phase 0 work (runs at call time):
 
@@ -314,8 +320,9 @@ async def open_async(  # noqa: A001
        optionally chunk with dask.
 
     Args:
-        href: Path to a local geoparquet file (``.parquet`` or
-            ``.geoparquet``).
+        href: Path to a geoparquet file (``.parquet`` or ``.geoparquet``)
+            or a hive-partitioned parquet directory when *duckdb_client* is
+            provided with ``use_hive_partitioning=True``.
         datetime: RFC 3339 datetime or range (e.g. ``"2023-01-01/2023-12-31"``)
             used to pre-filter items from the parquet.
         bbox: ``(minx, miny, maxx, maxy)`` in the target ``crs``.
@@ -332,7 +339,7 @@ async def open_async(  # noqa: A001
             ideal for point or small-region queries.  Pass an explicit dict
             to convert to a dask-backed array for parallel computation over
             larger regions.
-        sort_by: Sort keys forwarded to ``rustac`` DuckDB queries.
+        sort_by: Sort keys forwarded to DuckDB queries.
         nodata: No-data fill value for output arrays.
         dtype: Output array dtype.  Defaults to ``float32``.
         mosaic_method: Mosaic method class (not instance) to use.  Defaults
@@ -376,20 +383,41 @@ async def open_async(  # noqa: A001
 
                 da = lazycogs.open("items.parquet", ..., store=store, path_from_href=strip_bucket)
 
+        duckdb_client: Optional ``DuckdbClient`` instance.  When
+            ``None`` (default), a plain ``DuckdbClient()`` is used,
+            which is equivalent to the previous ``rustac.search_sync``
+            behaviour.  Pass a custom client to enable features such as
+            hive-partitioned datasets::
+
+                import rustac, lazycogs
+
+                client = DuckdbClient(use_hive_partitioning=True)
+                da = lazycogs.open(
+                    "s3://bucket/stac/",
+                    duckdb_client=client,
+                    bbox=...,
+                    crs=...,
+                    resolution=...,
+                )
+
     Returns:
         Lazy ``xr.DataArray`` with dimensions ``(time, band, y, x)``.
 
     Raises:
-        ValueError: If ``href`` is not a ``.parquet`` or ``.geoparquet`` file,
-            if no matching items are found, or if ``time_period`` is not a
-            recognised ISO 8601 duration.
+        ValueError: If ``href`` is not a ``.parquet`` or ``.geoparquet`` file
+            and no *duckdb_client* is provided, if no matching items are
+            found, or if ``time_period`` is not a recognised ISO 8601
+            duration.
 
     """
-    if not (href.endswith(".parquet") or href.endswith(".geoparquet")):
-        raise ValueError(
-            f"href must be a .parquet or .geoparquet file path, got: {href!r}. "
-            "To search a STAC API, use rustac.search_to() first."
-        )
+    if duckdb_client is None:
+        duckdb_client = DuckdbClient()
+        if not (href.endswith(".parquet") or href.endswith(".geoparquet")):
+            raise ValueError(
+                f"href must be a .parquet or .geoparquet file path, got: {href!r}. "
+                "To search a STAC API, use rustac.search_to() first. "
+                "To query a hive-partitioned directory, pass a duckdb_client."
+            )
 
     # Validate time_period early before any I/O so bad values fail fast.
     grouper = grouper_from_period(time_period)
@@ -413,6 +441,7 @@ async def open_async(  # noqa: A001
         t0 = time.perf_counter()
         resolved_bands = _discover_bands(
             href,
+            duckdb_client=duckdb_client,
             bbox=bbox_4326,
             datetime=datetime,
             filter=filter,
@@ -427,6 +456,7 @@ async def open_async(  # noqa: A001
     t0 = time.perf_counter()
     filter_strings, time_coords = _build_time_steps(
         href,
+        duckdb_client=duckdb_client,
         bbox=bbox_4326,
         datetime=datetime,
         filter=filter,
@@ -456,6 +486,7 @@ async def open_async(  # noqa: A001
 
     return _build_dataarray(
         parquet_path=href,
+        duckdb_client=duckdb_client,
         resolved_bands=resolved_bands,
         filter_strings=filter_strings,
         time_coords=time_coords,
@@ -495,6 +526,7 @@ def open(  # noqa: A001
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
     path_from_href: Callable[[str], str] | None = None,
+    duckdb_client: DuckdbClient | None = None,
 ) -> xr.DataArray:
     """Open a mosaic of STAC items as a lazy ``(time, band, y, x)`` DataArray.
 
@@ -506,13 +538,13 @@ def open(  # noqa: A001
     overhead.
 
     ``href`` must be a path to a geoparquet file (``.parquet`` or
-    ``.geoparquet``).  To search a STAC API first, use
-    ``rustac.search_to("items.parquet", api_url, ...)`` and pass the
-    resulting file here.
+    ``.geoparquet``) or, when *duckdb_client* is provided, to a
+    hive-partitioned parquet directory.
 
     Args:
-        href: Path to a local geoparquet file (``.parquet`` or
-            ``.geoparquet``).
+        href: Path to a geoparquet file (``.parquet`` or ``.geoparquet``)
+            or a hive-partitioned parquet directory when *duckdb_client* is
+            provided with ``use_hive_partitioning=True``.
         datetime: RFC 3339 datetime or range (e.g. ``"2023-01-01/2023-12-31"``)
             used to pre-filter items from the parquet.
         bbox: ``(minx, miny, maxx, maxy)`` in the target ``crs``.
@@ -529,7 +561,7 @@ def open(  # noqa: A001
             ideal for point or small-region queries.  Pass an explicit dict
             to convert to a dask-backed array for parallel computation over
             larger regions.
-        sort_by: Sort keys forwarded to ``rustac`` DuckDB queries.
+        sort_by: Sort keys forwarded to DuckDB queries.
         nodata: No-data fill value for output arrays.
         dtype: Output array dtype.  Defaults to ``float32``.
         mosaic_method: Mosaic method class (not instance) to use.  Defaults
@@ -549,34 +581,20 @@ def open(  # noqa: A001
             per chunk.  See :func:`open_async` for full documentation.
             Defaults to 32.
         path_from_href: Optional callable ``(href: str) -> str`` that extracts
-            the object path from an asset HREF.  When provided, it replaces the
-            default ``urlparse``-based extraction used in
-            :func:`~lazycogs._store.resolve`.  Most useful when combined with
-            a custom ``store`` whose root does not align with the URL path
-            structure of the asset HREFs.
-
-            Example — NASA LPDAAC proxy https url for S3 asset::
-
-                from obstore.store import S3Store
-                from urllib.parse import urlparse
-
-                store = S3Store(bucket="lp-prod-protected", ...)
-
-                def strip_bucket(href: str) -> str:
-                    # href: https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/path/to/file.tif
-                    # store is rooted at the bucket, so the path is just path/to/file.tif
-                    return urlparse(href).path.lstrip("/").removeprefix("lp-prod-protected/")
-
-                da = lazycogs.open("items.parquet", ..., store=store, path_from_href=strip_bucket)
-
+            the object path from an asset HREF.  See :func:`open_async` for
+            full documentation.
+        duckdb_client: Optional ``DuckdbClient`` instance.  When
+            ``None`` (default), a plain ``DuckdbClient()`` is created.
+            See :func:`open_async` for full documentation.
 
     Returns:
         Lazy ``xr.DataArray`` with dimensions ``(time, band, y, x)``.
 
     Raises:
-        ValueError: If ``href`` is not a ``.parquet`` or ``.geoparquet`` file,
-            if no matching items are found, or if ``time_period`` is not a
-            recognised ISO 8601 duration.
+        ValueError: If ``href`` is not a ``.parquet`` or ``.geoparquet`` file
+            and no *duckdb_client* is provided, if no matching items are
+            found, or if ``time_period`` is not a recognised ISO 8601
+            duration.
 
     """
     return _run_coroutine(
@@ -598,5 +616,6 @@ def open(  # noqa: A001
             store=store,
             max_concurrent_reads=max_concurrent_reads,
             path_from_href=path_from_href,
+            duckdb_client=duckdb_client,
         )
     )

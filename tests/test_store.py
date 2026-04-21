@@ -98,6 +98,42 @@ def test_user_supplied_store_bypasses_cache():
     assert auto_store is not user_store
 
 
+def test_path_fn_overrides_default_extraction():
+    """path_fn result is used instead of urlparse-based path extraction."""
+
+    def path_fn(href: str) -> str:
+        return "custom/extracted/path.tif"
+
+    _, path = resolve("s3://bucket/original/path.tif", path_fn=path_fn)
+    assert path == "custom/extracted/path.tif"
+
+
+def test_path_fn_with_store_returns_both():
+    """When store and path_fn are both supplied, path_fn drives extraction and store is returned unchanged."""
+    user_store = MemoryStore()
+
+    def path_fn(href: str) -> str:
+        return href.split("container/", 1)[1]
+
+    store, path = resolve(
+        "https://account.blob.core.windows.net/container/path/to/file.tif",
+        store=user_store,
+        path_fn=path_fn,
+    )
+    assert store is user_store
+    assert path == "path/to/file.tif"
+
+
+def test_path_fn_not_called_without_it():
+    """When path_fn is absent the default url-parse extraction is used."""
+    user_store = MemoryStore()
+    _, path = resolve(
+        "https://account.blob.core.windows.net/container/path/to/file.tif",
+        store=user_store,
+    )
+    assert path == "container/path/to/file.tif"
+
+
 # ---------------------------------------------------------------------------
 # _storage_extension_version
 # ---------------------------------------------------------------------------
@@ -359,19 +395,19 @@ _S3_ITEM = {
 
 def test_store_for_returns_store():
     """store_for constructs and returns an ObjectStore."""
-    with patch("lazycogs._store.rustac.search_sync", return_value=[_S3_ITEM]):
+    with patch("rustac.DuckdbClient.search", return_value=[_S3_ITEM]):
         store = store_for("items.parquet")
     assert store is not None
 
 
 def test_store_for_no_items_raises():
-    with patch("lazycogs._store.rustac.search_sync", return_value=[]):
+    with patch("rustac.DuckdbClient.search", return_value=[]):
         with pytest.raises(ValueError, match="No STAC items"):
             store_for("items.parquet")
 
 
 def test_store_for_missing_asset_raises():
-    with patch("lazycogs._store.rustac.search_sync", return_value=[_S3_ITEM]):
+    with patch("rustac.DuckdbClient.search", return_value=[_S3_ITEM]):
         with pytest.raises(KeyError, match="B99"):
             store_for("items.parquet", asset="B99")
 
@@ -393,7 +429,7 @@ def test_store_for_asset_kwarg_selects_asset():
             },
         },
     }
-    with patch("lazycogs._store.rustac.search_sync", return_value=[item]):
+    with patch("rustac.DuckdbClient.search", return_value=[item]):
         # without asset= the first data asset (B04 from bucket-a) would be used
         store = store_for("items.parquet", asset="B08")
     assert store is not None
@@ -418,7 +454,7 @@ def test_store_for_prefers_data_role_asset():
     }
     # If the data asset is chosen the store will be an S3 store, not HTTPS.
     # We verify indirectly: store_for must not raise (thumbnail has no S3 equivalent).
-    with patch("lazycogs._store.rustac.search_sync", return_value=[item]):
+    with patch("rustac.DuckdbClient.search", return_value=[item]):
         store = store_for("items.parquet")
     assert store is not None
 
@@ -439,7 +475,7 @@ def test_store_for_v1_extension_infers_region():
             }
         },
     }
-    with patch("lazycogs._store.rustac.search_sync", return_value=[item]):
+    with patch("rustac.DuckdbClient.search", return_value=[item]):
         # If region extraction fails the store is still returned — this just
         # verifies no exception is raised and the store is not None.
         store = store_for("items.parquet")
@@ -468,7 +504,7 @@ def test_store_for_v2_extension_infers_region():
             }
         },
     }
-    with patch("lazycogs._store.rustac.search_sync", return_value=[item]):
+    with patch("rustac.DuckdbClient.search", return_value=[item]):
         store = store_for("items.parquet")
     assert store is not None
 
@@ -489,7 +525,7 @@ def test_store_for_malformed_extension_does_not_raise():
             }
         },
     }
-    with patch("lazycogs._store.rustac.search_sync", return_value=[item]):
+    with patch("rustac.DuckdbClient.search", return_value=[item]):
         store = store_for("items.parquet")
     assert store is not None
 
@@ -514,7 +550,7 @@ def test_store_for_https_url_region_in_hostname_no_duplicate():
             }
         },
     }
-    with patch("lazycogs._store.rustac.search_sync", return_value=[item]):
+    with patch("rustac.DuckdbClient.search", return_value=[item]):
         store = store_for("items.parquet")
     assert store is not None
 
@@ -529,7 +565,7 @@ def test_store_for_kwargs_override_defaults():
 
         return real_from_url(url, **kwargs)
 
-    with patch("lazycogs._store.rustac.search_sync", return_value=[_S3_ITEM]):
+    with patch("rustac.DuckdbClient.search", return_value=[_S3_ITEM]):
         with patch("lazycogs._store.from_url", side_effect=capture_from_url):
             store_for("items.parquet", skip_signature=False)
 

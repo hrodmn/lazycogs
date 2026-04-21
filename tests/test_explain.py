@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+from rustac import DuckdbClient
 import xarray as xr
 from affine import Affine
 from pyproj import CRS
@@ -54,6 +55,7 @@ def _make_backend(
         affine = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 10.0)
     return StacBackendArray(
         parquet_path=parquet_path,
+        duckdb_client=DuckdbClient(),
         band=band,
         dates=dates,
         dst_affine=affine,
@@ -479,7 +481,7 @@ def test_accessor_explain_returns_plan(wgs84):
         height=4,
     )
 
-    with patch("lazycogs._explain.rustac.search_sync") as mock_search:
+    with patch("rustac.DuckdbClient.search") as mock_search:
         mock_search.return_value = _fake_items("red", 2)
         plan = da.lazycogs.explain()
 
@@ -503,7 +505,7 @@ def test_accessor_explain_empty_results(wgs84):
         height=4,
     )
 
-    with patch("lazycogs._explain.rustac.search_sync") as mock_search:
+    with patch("rustac.DuckdbClient.search") as mock_search:
         mock_search.return_value = []
         plan = da.lazycogs.explain()
 
@@ -526,7 +528,7 @@ def test_accessor_explain_with_dask_chunks(wgs84):
     )
     da = da.chunk({"y": 4, "x": 4})
 
-    with patch("lazycogs._explain.rustac.search_sync") as mock_search:
+    with patch("rustac.DuckdbClient.search") as mock_search:
         mock_search.return_value = []
         plan = da.lazycogs.explain()
 
@@ -549,7 +551,7 @@ def test_accessor_explain_multiple_bands(wgs84):
         height=4,
     )
 
-    with patch("lazycogs._explain.rustac.search_sync") as mock_search:
+    with patch("rustac.DuckdbClient.search") as mock_search:
         mock_search.return_value = _fake_items("red", 1)
         plan = da.lazycogs.explain()
 
@@ -572,7 +574,7 @@ def test_accessor_explain_band_slice(wgs84):
     )
     da_red = da.sel(band="red")
 
-    with patch("lazycogs._explain.rustac.search_sync") as mock_search:
+    with patch("rustac.DuckdbClient.search") as mock_search:
         mock_search.return_value = []
         plan = da_red.lazycogs.explain()
 
@@ -598,7 +600,7 @@ def test_accessor_explain_time_slice(wgs84):
     )
     da_sliced = da.isel(time=slice(0, 2))  # first 2 time steps
 
-    with patch("lazycogs._explain.rustac.search_sync") as mock_search:
+    with patch("rustac.DuckdbClient.search") as mock_search:
         mock_search.return_value = []
         plan = da_sliced.lazycogs.explain()
 

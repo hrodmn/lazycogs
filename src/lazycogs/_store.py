@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-import rustac
+from rustac import DuckdbClient
 from obstore.store import from_url
 
 if TYPE_CHECKING:
@@ -183,7 +183,13 @@ def _extract_store_kwargs(
     return {}
 
 
-def store_for(href: str, *, asset: str | None = None, **kwargs: Any) -> "ObjectStore":
+def store_for(
+    href: str,
+    *,
+    asset: str | None = None,
+    duckdb_client: DuckdbClient | None = None,
+    **kwargs: Any,
+) -> "ObjectStore":
     """Construct an ``ObjectStore`` by inspecting a geoparquet STAC items file.
 
     Reads one sample item from *href*, derives the store root URL from a data
@@ -197,11 +203,13 @@ def store_for(href: str, *, asset: str | None = None, **kwargs: Any) -> "ObjectS
     credentials directly.
 
     Args:
-        href: Path to a local geoparquet STAC items file (``.parquet`` or
-            ``.geoparquet``).
+        href: Path to a geoparquet file or hive-partitioned parquet directory.
         asset: Asset key to inspect when choosing a representative asset.
             Defaults to the first data asset (role ``"data"`` or media type
             ``"image/tiff"``), falling back to the first asset in the item.
+        duckdb_client: Optional ``DuckdbClient`` instance.  When
+            ``None`` (default), a plain ``DuckdbClient()`` is used.
+            Pass a custom client to query hive-partitioned datasets.
         **kwargs: Forwarded to :func:`obstore.store.from_url`, overriding
             any inferred values.
 
@@ -213,7 +221,9 @@ def store_for(href: str, *, asset: str | None = None, **kwargs: Any) -> "ObjectS
         KeyError: If *asset* is specified but not present in the item.
 
     """
-    items = rustac.search_sync(href, use_duckdb=True, max_items=1)
+    if duckdb_client is None:
+        duckdb_client = DuckdbClient()
+    items = duckdb_client.search(href, max_items=1)
     if not items:
         raise ValueError(f"No STAC items found in {href!r}")
     item = items[0]

@@ -16,7 +16,7 @@ from pyproj import CRS, Transformer
 from xarray.backends.common import BackendArray
 from xarray.core import indexing
 
-import rustac
+from rustac import DuckdbClient
 
 from lazycogs._chunk_reader import async_mosaic_chunk, async_mosaic_chunk_multiband
 from lazycogs._executor import get_max_workers
@@ -75,8 +75,11 @@ class StacBackendArray(BackendArray):
     happens until ``__getitem__`` is called inside a dask task.
 
     Attributes:
-        parquet_path: Path to the local geoparquet file written by
-            ``rustac.search_to``.
+        parquet_path: Path to the geoparquet file or hive-partitioned directory
+            passed to ``duckdb_client.search``.
+        duckdb_client: ``DuckdbClient`` instance used for all STAC
+            queries.  Constructed with default settings in :func:`open` when
+            not supplied by the caller.
         band: STAC asset key for the band this array represents.
         dates: Sorted list of unique acquisition date strings
             (``"YYYY-MM-DD"``), one entry per time step.
@@ -115,6 +118,7 @@ class StacBackendArray(BackendArray):
     """
 
     parquet_path: str
+    duckdb_client: DuckdbClient
     band: str
     dates: list[str]
     dst_affine: Affine
@@ -266,17 +270,16 @@ class StacBackendArray(BackendArray):
             date = self.dates[t_idx]
 
             t0 = time.perf_counter()
-            items = rustac.search_sync(
+            items = self.duckdb_client.search(
                 self.parquet_path,
                 bbox=chunk_bbox_4326,
                 datetime=date,
-                use_duckdb=True,
                 sortby=self.sort_by,
                 filter=self.filter,
                 ids=self.ids,
             )
             logger.debug(
-                "rustac.search_sync band=%r date=%s returned %d items in %.3fs",
+                "duckdb_client.search band=%r date=%s returned %d items in %.3fs",
                 self.band,
                 date,
                 len(items),
@@ -394,8 +397,8 @@ class MultiBandStacBackendArray(BackendArray):
 
         Reads all selected bands together per time step via
         :func:`~lazycogs._chunk_reader.async_mosaic_chunk_multiband`, issuing
-        a single ``rustac.search_sync`` query per time step and sharing
-        reprojection warp maps across bands that have identical source geometry.
+        a single DuckDB query per time step and sharing reprojection warp maps
+        across bands that have identical source geometry.
 
         Args:
             key: A tuple of ``int | slice`` objects for the
@@ -479,17 +482,16 @@ class MultiBandStacBackendArray(BackendArray):
             date = ref.dates[t_idx]
 
             t0 = time.perf_counter()
-            items = rustac.search_sync(
+            items = ref.duckdb_client.search(
                 ref.parquet_path,
                 bbox=chunk_bbox_4326,
                 datetime=date,
-                use_duckdb=True,
                 sortby=ref.sort_by,
                 filter=ref.filter,
                 ids=ref.ids,
             )
             logger.debug(
-                "rustac.search_sync bands=%r date=%s returned %d items in %.3fs",
+                "duckdb_client.search bands=%r date=%s returned %d items in %.3fs",
                 selected_band_names,
                 date,
                 len(items),
