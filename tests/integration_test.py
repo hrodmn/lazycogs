@@ -143,7 +143,7 @@ async def run():
         time_period="P1M",
         bands=["red", "green", "blue"],
         dtype="int16",
-        sort_by="eo:cloud_cover",
+        sortby="eo:cloud_cover",
         filter="eo:cloud_cover < 50",
         max_concurrent_reads=8,
     )

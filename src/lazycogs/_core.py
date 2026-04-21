@@ -165,7 +165,7 @@ def _build_dataarray(
     bbox_4326: list[float],
     dst_crs: CRS,
     resolution: float,
-    sort_by: list[str] | None,
+    sortby: list[str] | None,
     filter: str | dict[str, Any] | None,
     ids: list[str] | None,
     nodata: float | None,
@@ -195,7 +195,7 @@ def _build_dataarray(
         bbox_4326: Bounding box in EPSG:4326.
         dst_crs: Target output CRS.
         resolution: Output pixel size in ``dst_crs`` units.
-        sort_by: Optional rustac sort keys.
+        sortby: Optional rustac sort keys.
         filter: CQL2 filter expression forwarded to per-chunk DuckDB queries.
         ids: STAC item IDs forwarded to per-chunk DuckDB queries.
         nodata: No-data fill value.
@@ -229,7 +229,7 @@ def _build_dataarray(
             dst_affine=dst_affine,
             dst_crs=dst_crs,
             bbox_4326=bbox_4326,
-            sort_by=sort_by,
+            sortby=sortby,
             filter=filter,
             ids=ids,
             dst_width=dst_width,
@@ -289,7 +289,7 @@ async def open_async(  # noqa: A001
     ids: list[str] | None = None,
     bands: list[str] | None = None,
     chunks: dict[str, int] | None = None,
-    sort_by: list[str] | None = None,
+    sortby: list[str] | None = None,
     nodata: float | None = None,
     dtype: str | np.dtype | None = None,
     mosaic_method: type[MosaicMethodBase] | None = None,
@@ -339,7 +339,7 @@ async def open_async(  # noqa: A001
             ideal for point or small-region queries.  Pass an explicit dict
             to convert to a dask-backed array for parallel computation over
             larger regions.
-        sort_by: Sort keys forwarded to DuckDB queries.
+        sortby: Sort keys forwarded to DuckDB queries.
         nodata: No-data fill value for output arrays.
         dtype: Output array dtype.  Defaults to ``float32``.
         mosaic_method: Mosaic method class (not instance) to use.  Defaults
@@ -494,7 +494,7 @@ async def open_async(  # noqa: A001
         bbox_4326=bbox_4326,
         dst_crs=dst_crs,
         resolution=resolution,
-        sort_by=sort_by,
+        sortby=sortby,
         filter=filter,
         ids=ids,
         nodata=nodata,
@@ -518,7 +518,7 @@ def open(  # noqa: A001
     ids: list[str] | None = None,
     bands: list[str] | None = None,
     chunks: dict[str, int] | None = None,
-    sort_by: list[str] | None = None,
+    sortby: list[str] | None = None,
     nodata: float | None = None,
     dtype: str | np.dtype | None = None,
     mosaic_method: type[MosaicMethodBase] | None = None,
@@ -561,7 +561,7 @@ def open(  # noqa: A001
             ideal for point or small-region queries.  Pass an explicit dict
             to convert to a dask-backed array for parallel computation over
             larger regions.
-        sort_by: Sort keys forwarded to DuckDB queries.
+        sortby: Sort keys forwarded to DuckDB queries.
         nodata: No-data fill value for output arrays.
         dtype: Output array dtype.  Defaults to ``float32``.
         mosaic_method: Mosaic method class (not instance) to use.  Defaults
@@ -608,7 +608,7 @@ def open(  # noqa: A001
             ids=ids,
             bands=bands,
             chunks=chunks,
-            sort_by=sort_by,
+            sortby=sortby,
             nodata=nodata,
             dtype=dtype,
             mosaic_method=mosaic_method,

@@ -87,7 +87,7 @@ class StacBackendArray(BackendArray):
         dst_crs: CRS of the output grid.
         bbox_4326: ``[minx, miny, maxx, maxy]`` in EPSG:4326, used as the
             coarse spatial filter for the initial parquet query.
-        sort_by: Optional list of ``rustac`` sort keys passed to DuckDB
+        sortby: Optional list of ``rustac`` sort keys passed to DuckDB
             queries (e.g. ``["-properties.datetime"]``).
         filter: CQL2 filter expression (text string or JSON dict) forwarded
             to per-chunk DuckDB queries.
@@ -124,7 +124,7 @@ class StacBackendArray(BackendArray):
     dst_affine: Affine
     dst_crs: CRS
     bbox_4326: list[float]
-    sort_by: list[str] | None
+    sortby: list[str] | None
     filter: str | dict[str, Any] | None
     ids: list[str] | None
     dst_width: int
@@ -274,7 +274,7 @@ class StacBackendArray(BackendArray):
                 self.parquet_path,
                 bbox=chunk_bbox_4326,
                 datetime=date,
-                sortby=self.sort_by,
+                sortby=self.sortby,
                 filter=self.filter,
                 ids=self.ids,
             )
@@ -486,7 +486,7 @@ class MultiBandStacBackendArray(BackendArray):
                 ref.parquet_path,
                 bbox=chunk_bbox_4326,
                 datetime=date,
-                sortby=ref.sort_by,
+                sortby=ref.sortby,
                 filter=ref.filter,
                 ids=ref.ids,
             )
