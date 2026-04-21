@@ -589,7 +589,7 @@
 
 
 <a href="#lazycogs.open" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">open</span><span class="p">(</span><span class="n">href</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">datetime</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bbox</span><span class="p">:</span> <span class="n"><span title="tuple">tuple</span></span><span class="p">[</span><span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">],</span> <span class="n">crs</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="pyproj.CRS">CRS</span></span><span class="p">,</span> <span class="n">resolution</span><span class="p">:</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="nb">filter</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ids</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bands</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">chunks</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">sort_by</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nodata</span><span class="p">:</span> <span class="n"><span title="float">float</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="numpy.dtype">dtype</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">mosaic_method</span><span class="p">:</span> <span class="n"><span title="type">type</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="lazycogs.MosaicMethodBase (lazycogs._mosaic_methods.MosaicMethodBase)" href="../mosaic/#lazycogs.MosaicMethodBase">MosaicMethodBase</a></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">time_period</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">=</span> <span class="s1">&#39;P1D&#39;</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n"><span title="obstore.store.ObjectStore">ObjectStore</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">max_concurrent_reads</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="n">path_from_href</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[[</span><span class="n"><span title="str">str</span></span><span class="p">],</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="xarray.DataArray">DataArray</span></span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">open</span><span class="p">(</span><span class="n">href</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">datetime</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bbox</span><span class="p">:</span> <span class="n"><span title="tuple">tuple</span></span><span class="p">[</span><span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">],</span> <span class="n">crs</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="pyproj.CRS">CRS</span></span><span class="p">,</span> <span class="n">resolution</span><span class="p">:</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="nb">filter</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ids</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bands</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">chunks</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">sort_by</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nodata</span><span class="p">:</span> <span class="n"><span title="float">float</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="numpy.dtype">dtype</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">mosaic_method</span><span class="p">:</span> <span class="n"><span title="type">type</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="lazycogs.MosaicMethodBase (lazycogs._mosaic_methods.MosaicMethodBase)" href="../mosaic/#lazycogs.MosaicMethodBase">MosaicMethodBase</a></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">time_period</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">=</span> <span class="s1">&#39;P1D&#39;</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n"><span title="obstore.store.ObjectStore">ObjectStore</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">max_concurrent_reads</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="n">path_from_href</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[[</span><span class="n"><span title="str">str</span></span><span class="p">],</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">duckdb_client</span><span class="p">:</span> <span class="n"><span title="rustac.DuckdbClient">DuckdbClient</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="xarray.DataArray">DataArray</span></span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -602,9 +602,8 @@ event loop so the caller does not need <code>await</code>.  Use :func:<code>open
 directly if you are already in an async context and want to skip the thread
 overhead.</p>
 <p><code>href</code> must be a path to a geoparquet file (<code>.parquet</code> or
-<code>.geoparquet</code>).  To search a STAC API first, use
-<code>rustac.search_to("items.parquet", api_url, ...)</code> and pass the
-resulting file here.</p>
+<code>.geoparquet</code>) or, when <em>duckdb_client</em> is provided, to a
+hive-partitioned parquet directory.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -627,8 +626,9 @@ resulting file here.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Path to a local geoparquet file (<code>.parquet</code> or
-<code>.geoparquet</code>).</p>
+                <p>Path to a geoparquet file (<code>.parquet</code> or <code>.geoparquet</code>)
+or a hive-partitioned parquet directory when <em>duckdb_client</em> is
+provided with <code>use_hive_partitioning=True</code>.</p>
               </div>
             </td>
             <td>
@@ -780,7 +780,7 @@ larger regions.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Sort keys forwarded to <code>rustac</code> DuckDB queries.</p>
+                <p>Sort keys forwarded to DuckDB queries.</p>
               </div>
             </td>
             <td>
@@ -905,24 +905,26 @@ Defaults to 32.</p>
             <td>
               <div class="doc-md-description">
                 <p>Optional callable <code>(href: str) -&gt; str</code> that extracts
-the object path from an asset HREF.  When provided, it replaces the
-default <code>urlparse</code>-based extraction used in
-:func:<code>~lazycogs._store.resolve</code>.  Most useful when combined with
-a custom <code>store</code> whose root does not align with the URL path
-structure of the asset HREFs.</p>
-<p>Example — NASA LPDAAC proxy https url for S3 asset::</p>
-<div class="highlight"><pre><span></span><code>from obstore.store import S3Store
-from urllib.parse import urlparse
-
-store = S3Store(bucket=&quot;lp-prod-protected&quot;, ...)
-
-def strip_bucket(href: str) -&gt; str:
-    # href: https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/path/to/file.tif
-    # store is rooted at the bucket, so the path is just path/to/file.tif
-    return urlparse(href).path.lstrip(&quot;/&quot;).removeprefix(&quot;lp-prod-protected/&quot;)
-
-da = lazycogs.open(&quot;items.parquet&quot;, ..., store=store, path_from_href=strip_bucket)
-</code></pre></div>
+the object path from an asset HREF.  See :func:<code>open_async</code> for
+full documentation.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>duckdb_client</code>
+            </td>
+            <td>
+                  <code><span title="rustac.DuckdbClient">DuckdbClient</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional <code>DuckdbClient</code> instance.  When
+<code>None</code> (default), a plain <code>DuckdbClient()</code> is created.
+See :func:<code>open_async</code> for full documentation.</p>
               </div>
             </td>
             <td>
@@ -971,9 +973,10 @@ da = lazycogs.open(&quot;items.parquet&quot;, ..., store=store, path_from_href=s
             </td>
             <td>
               <div class="doc-md-description">
-                <p>If <code>href</code> is not a <code>.parquet</code> or <code>.geoparquet</code> file,
-if no matching items are found, or if <code>time_period</code> is not a
-recognised ISO 8601 duration.</p>
+                <p>If <code>href</code> is not a <code>.parquet</code> or <code>.geoparquet</code> file
+and no <em>duckdb_client</em> is provided, if no matching items are
+found, or if <code>time_period</code> is not a recognised ISO 8601
+duration.</p>
               </div>
             </td>
           </tr>
@@ -997,7 +1000,7 @@ recognised ISO 8601 duration.</p>
   </span>
 
 <a href="#lazycogs.open_async" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">open_async</span><span class="p">(</span><span class="n">href</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">datetime</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bbox</span><span class="p">:</span> <span class="n"><span title="tuple">tuple</span></span><span class="p">[</span><span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">],</span> <span class="n">resolution</span><span class="p">:</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n">crs</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="pyproj.CRS">CRS</span></span><span class="p">,</span> <span class="nb">filter</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ids</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bands</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">chunks</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">sort_by</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nodata</span><span class="p">:</span> <span class="n"><span title="float">float</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="numpy.dtype">dtype</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">mosaic_method</span><span class="p">:</span> <span class="n"><span title="type">type</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="lazycogs.MosaicMethodBase (lazycogs._mosaic_methods.MosaicMethodBase)" href="../mosaic/#lazycogs.MosaicMethodBase">MosaicMethodBase</a></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">time_period</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">=</span> <span class="s1">&#39;P1D&#39;</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n"><span title="obstore.store.ObjectStore">ObjectStore</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">max_concurrent_reads</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="n">path_from_href</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[[</span><span class="n"><span title="str">str</span></span><span class="p">],</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="xarray.DataArray">DataArray</span></span>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">open_async</span><span class="p">(</span><span class="n">href</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">datetime</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bbox</span><span class="p">:</span> <span class="n"><span title="tuple">tuple</span></span><span class="p">[</span><span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n"><span title="float">float</span></span><span class="p">],</span> <span class="n">resolution</span><span class="p">:</span> <span class="n"><span title="float">float</span></span><span class="p">,</span> <span class="n">crs</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="pyproj.CRS">CRS</span></span><span class="p">,</span> <span class="nb">filter</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ids</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bands</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">chunks</span><span class="p">:</span> <span class="n"><span title="dict">dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">sort_by</span><span class="p">:</span> <span class="n"><span title="list">list</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nodata</span><span class="p">:</span> <span class="n"><span title="float">float</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="numpy.dtype">dtype</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">mosaic_method</span><span class="p">:</span> <span class="n"><span title="type">type</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="lazycogs.MosaicMethodBase (lazycogs._mosaic_methods.MosaicMethodBase)" href="../mosaic/#lazycogs.MosaicMethodBase">MosaicMethodBase</a></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">time_period</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">=</span> <span class="s1">&#39;P1D&#39;</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n"><span title="obstore.store.ObjectStore">ObjectStore</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">max_concurrent_reads</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span> <span class="n">path_from_href</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[[</span><span class="n"><span title="str">str</span></span><span class="p">],</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">duckdb_client</span><span class="p">:</span> <span class="n"><span title="rustac.DuckdbClient">DuckdbClient</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="xarray.DataArray">DataArray</span></span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
@@ -1005,10 +1008,9 @@ recognised ISO 8601 duration.</p>
         <p>Open a mosaic of STAC items as a lazy <code>(time, band, y, x)</code> DataArray.</p>
 <p>Async entry point, suitable for use with <code>await</code> in Jupyter notebooks
 and other async contexts.  For synchronous scripts, use :func:<code>open</code>.</p>
-<p><code>href</code> must be a path to a local geoparquet file (<code>.parquet</code> or
-<code>.geoparquet</code>).  To search a STAC API first, use
-<code>rustac.search_to("items.parquet", api_url, ...)</code> and pass the
-resulting file here.</p>
+<p><code>href</code> must be a path to a geoparquet file (<code>.parquet</code> or
+<code>.geoparquet</code>) or, when <em>duckdb_client</em> is provided, to a
+hive-partitioned parquet directory.</p>
 <p>Phase 0 work (runs at call time):</p>
 <ol>
 <li>Query the geoparquet index via DuckDB to discover bands and unique
@@ -1042,8 +1044,9 @@ resulting file here.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Path to a local geoparquet file (<code>.parquet</code> or
-<code>.geoparquet</code>).</p>
+                <p>Path to a geoparquet file (<code>.parquet</code> or <code>.geoparquet</code>)
+or a hive-partitioned parquet directory when <em>duckdb_client</em> is
+provided with <code>use_hive_partitioning=True</code>.</p>
               </div>
             </td>
             <td>
@@ -1195,7 +1198,7 @@ larger regions.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Sort keys forwarded to <code>rustac</code> DuckDB queries.</p>
+                <p>Sort keys forwarded to DuckDB queries.</p>
               </div>
             </td>
             <td>
@@ -1348,6 +1351,37 @@ da = lazycogs.open(&quot;items.parquet&quot;, ..., store=store, path_from_href=s
                   <code>None</code>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>duckdb_client</code>
+            </td>
+            <td>
+                  <code><span title="rustac.DuckdbClient">DuckdbClient</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional <code>DuckdbClient</code> instance.  When
+<code>None</code> (default), a plain <code>DuckdbClient()</code> is used,
+which is equivalent to the previous <code>rustac.search_sync</code>
+behaviour.  Pass a custom client to enable features such as
+hive-partitioned datasets::</p>
+<div class="highlight"><pre><span></span><code>import rustac, lazycogs
+
+client = DuckdbClient(use_hive_partitioning=True)
+da = lazycogs.open(
+    &quot;s3://bucket/stac/&quot;,
+    duckdb_client=client,
+    bbox=...,
+    crs=...,
+    resolution=...,
+)
+</code></pre></div>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -1390,9 +1424,10 @@ da = lazycogs.open(&quot;items.parquet&quot;, ..., store=store, path_from_href=s
             </td>
             <td>
               <div class="doc-md-description">
-                <p>If <code>href</code> is not a <code>.parquet</code> or <code>.geoparquet</code> file,
-if no matching items are found, or if <code>time_period</code> is not a
-recognised ISO 8601 duration.</p>
+                <p>If <code>href</code> is not a <code>.parquet</code> or <code>.geoparquet</code> file
+and no <em>duckdb_client</em> is provided, if no matching items are
+found, or if <code>time_period</code> is not a recognised ISO 8601
+duration.</p>
               </div>
             </td>
           </tr>

@@ -376,6 +376,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#hive-partitioned-stac-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hive-partitioned STAC datasets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tuning-concurrency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -715,6 +726,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#hive-partitioned-stac-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hive-partitioned STAC datasets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tuning-concurrency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -942,6 +964,29 @@ and the empty-chunk fraction (useful for diagnosing sparse time series).</p>
 <a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">da</span> <span class="o">=</span> <span class="n">lazycogs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;items.parquet&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">store</span><span class="o">=</span><span class="n">store</span><span class="p">)</span>
 </code></pre></div>
 <p><code>NasaEarthdataAsyncCredentialProvider</code> is not supported. It creates an <code>aiohttp</code> session at construction time that is bound to the event loop active when it is created. lazycogs runs each chunk read in a short-lived event loop (and in Jupyter, in a separate thread with its own loop), so the session ends up attached to the wrong loop and raises a runtime error. The synchronous provider uses <code>requests</code>, which is event-loop-agnostic and works correctly in all contexts.</p>
+<h2 id="hive-partitioned-stac-datasets">Hive-partitioned STAC datasets<a class="headerlink" href="#hive-partitioned-stac-datasets" title="Permanent link">&para;</a></h2>
+<p>By default, lazycogs creates a plain <code>DuckdbClient()</code> and queries a single geoparquet
+file. If your STAC items are stored as a <strong>hive-partitioned parquet directory</strong> (e.g.
+<code>year=2023/month=01/...</code>) you can pass a pre-configured client with
+<code>use_hive_partitioning=True</code> to enable partition pruning:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rustac</span><span class="w"> </span><span class="kn">import</span> <span class="n">DuckdbClient</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">lazycogs</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">client</span> <span class="o">=</span> <span class="n">DuckdbClient</span><span class="p">(</span><span class="n">use_hive_partitioning</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">da</span> <span class="o">=</span> <span class="n">lazycogs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="s2">&quot;s3://bucket/stac/&quot;</span><span class="p">,</span>            <span class="c1"># directory, not a single file</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">duckdb_client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">bbox</span><span class="o">=</span><span class="p">(</span><span class="mf">380000.0</span><span class="p">,</span> <span class="mf">4928000.0</span><span class="p">,</span> <span class="mf">420000.0</span><span class="p">,</span> <span class="mf">4984000.0</span><span class="p">),</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="n">crs</span><span class="o">=</span><span class="s2">&quot;EPSG:32615&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="n">resolution</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="p">)</span>
+</code></pre></div>
+<p>DuckDB skips partition directories that cannot match the spatial/temporal filters,
+which can dramatically reduce the number of parquet files scanned on large archives.</p>
+<p>You can pass any <code>DuckdbClient</code> constructor options (<code>extension_directory</code>,
+<code>extensions</code>, <code>install_extensions</code>) using the same approach. When <code>duckdb_client</code> is
+<code>None</code> (the default), lazycogs behaves exactly as before.</p>
 <h2 id="tuning-concurrency">Tuning concurrency<a class="headerlink" href="#tuning-concurrency" title="Permanent link">&para;</a></h2>
 <p>lazycogs uses two independent concurrency controls:</p>
 <p><strong><code>max_concurrent_reads</code></strong> (passed to <code>open()</code>, default 32) limits how many COG files are opened and read simultaneously within a single chunk. This is pure async I/O — it does not create threads. Lower it if you want to reduce peak memory per chunk or are hitting S3 request-rate limits.</p>
@@ -949,9 +994,9 @@ and the empty-chunk fraction (useful for diagnosing sparse time series).</p>
 <p>Each chunk gets its own independent thread pool (not a shared global pool), so dask tasks do not queue behind each other for reprojection.</p>
 <p>When using dask, total concurrent COG reads across all workers equals <code>dask_workers × max_concurrent_reads</code>. On a 16-core machine with default dask worker count (16) and <code>max_concurrent_reads=32</code>, that is 512 simultaneous reads. If you hit S3 throttling or memory pressure, reduce <code>max_concurrent_reads</code> at <code>open()</code> time.</p>
 <p>For better throughput, add time parallelism via dask rather than raising reprojection workers:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># parallelize across time steps — each step gets its own full event loop + thread pool</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">da</span> <span class="o">=</span> <span class="n">lazycogs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;items.parquet&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;time&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">da</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># parallelize across time steps — each step gets its own full event loop + thread pool</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">da</span> <span class="o">=</span> <span class="n">lazycogs</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;items.parquet&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;time&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">da</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
 </code></pre></div>
 <h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
