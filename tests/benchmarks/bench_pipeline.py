@@ -132,6 +132,37 @@ def test_native_crs_resolution(benchmark, benchmark_parquet: str) -> None:
 
 @pytest.mark.benchmark
 @pytest.mark.parametrize(
+    "chunks",
+    [None, {"time": 1}],
+    ids=["no_dask", "dask_time_1"],
+)
+def test_time_step_parallelism(
+    benchmark, expanded_benchmark_parquet: str, chunks: dict | None
+) -> None:
+    """Compare native time-step thread pool vs Dask across 24 time steps.
+
+    ``no_dask`` exercises the per-chunk ``ThreadPoolExecutor`` introduced in
+    ``_raw_getitem``; ``dask_time_1`` dispatches one Dask task per time step.
+    Both paths read the same data — the result shows relative overhead of Dask
+    scheduling vs the built-in thread pool for this workload.
+    """
+
+    def run() -> object:
+        da = lazycogs.open(
+            expanded_benchmark_parquet,
+            bbox=BENCHMARK_BBOX,
+            crs=BENCHMARK_CRS,
+            resolution=60.0,
+            time_period="P1M",
+            chunks=chunks,
+        )
+        return da.compute()
+
+    benchmark(run)
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize(
     "bands",
     [BENCHMARK_SINGLE_BAND, BENCHMARK_MULTIBAND],
     ids=["single_band", "multi_band"],
