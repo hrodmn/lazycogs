@@ -455,14 +455,23 @@ class MultiBandStacBackendArray(BackendArray):
             )
             return chunk_result
 
-        n_workers = min(len(time_indices), _MAX_CONCURRENT_TIME_STEPS)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
-            for i, chunk_data in enumerate(pool.map(_one_date, time_indices)):
-                if chunk_data is None:
-                    continue
+        if len(time_indices) == 1:
+            # Fast path: skip thread pool overhead for the common single-step case
+            # (e.g. Dask chunks={"time": 1} or point extractions).
+            chunk_data = _one_date(time_indices[0])
+            if chunk_data is not None:
                 for bi, band in enumerate(selected_bands):
                     arr = chunk_data[band]
-                    result[bi, i] = arr[0] if arr.ndim == 3 else arr
+                    result[bi, 0] = arr[0] if arr.ndim == 3 else arr
+        else:
+            n_workers = min(len(time_indices), _MAX_CONCURRENT_TIME_STEPS)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+                for i, chunk_data in enumerate(pool.map(_one_date, time_indices)):
+                    if chunk_data is None:
+                        continue
+                    for bi, band in enumerate(selected_bands):
+                        arr = chunk_data[band]
+                        result[bi, i] = arr[0] if arr.ndim == 3 else arr
 
         # Physical data is top-down; flip to ascending y order for xarray.
         result = result[:, :, ::-1, :]
