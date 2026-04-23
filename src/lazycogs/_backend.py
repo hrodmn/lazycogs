@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,6 +24,8 @@ from lazycogs._executor import get_max_workers
 from lazycogs._mosaic_methods import MosaicMethodBase
 
 logger = logging.getLogger(__name__)
+
+_MAX_CONCURRENT_TIME_STEPS = 8
 
 
 def _run_coroutine(coro: Any) -> Any:
@@ -326,6 +329,9 @@ class MultiBandStacBackendArray(BackendArray):
     max_concurrent_reads: int = field(default=32)
     path_from_href: Callable[[str], str] | None = field(default=None)
     shape: tuple[int, ...] = field(init=False)
+    _duckdb_lock: threading.Lock = field(
+        init=False, repr=False, compare=False, default_factory=threading.Lock
+    )
 
     def __post_init__(self) -> None:
         """Derive shape from the other fields."""
@@ -396,32 +402,33 @@ class MultiBandStacBackendArray(BackendArray):
             dtype=self.dtype,
         )
 
-        # Shared across all time steps: source tiles at the same grid position
-        # (identical src_transform + src_crs) reuse the same WarpMap.
+        # warp_cache is shared across time steps: tiles with the same native
+        # CRS and window transform reuse the same WarpMap. Concurrent writes
+        # from parallel time-step threads are safe — compute_warp_map is
+        # deterministic, so a duplicate write just overwrites an identical value.
         warp_cache: dict = {}
 
         filter_fields = _extract_filter_fields(self.filter) if self.filter else set()
 
-        for i, t_idx in enumerate(time_indices):
+        def _one_date(t_idx: int) -> dict[str, np.ndarray] | None:
+            """Query DuckDB and mosaic one time step; returns None when no items match."""
             date = self.dates[t_idx]
-
-            items = _search_items(
-                self.duckdb_client,
-                self.parquet_path,
-                win.chunk_bbox_4326,
-                date,
-                self.sortby,
-                self.filter,
-                self.ids,
-                filter_fields,
-                label=f"bands={selected_bands!r}",
-            )
-
+            with self._duckdb_lock:
+                items = _search_items(
+                    self.duckdb_client,
+                    self.parquet_path,
+                    win.chunk_bbox_4326,
+                    date,
+                    self.sortby,
+                    self.filter,
+                    self.ids,
+                    filter_fields,
+                    label=f"bands={selected_bands!r}",
+                )
             if not items:
-                continue
-
+                return None
             t0 = time.perf_counter()
-            chunk_data = _run_coroutine(
+            chunk_result = _run_coroutine(
                 async_mosaic_chunk_multiband(
                     items=items,
                     bands=selected_bands,
@@ -446,10 +453,16 @@ class MultiBandStacBackendArray(BackendArray):
                 win.chunk_height,
                 time.perf_counter() - t0,
             )
+            return chunk_result
 
-            for bi, band in enumerate(selected_bands):
-                arr = chunk_data[band]
-                result[bi, i] = arr[0] if arr.ndim == 3 else arr
+        n_workers = min(len(time_indices), _MAX_CONCURRENT_TIME_STEPS)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+            for i, chunk_data in enumerate(pool.map(_one_date, time_indices)):
+                if chunk_data is None:
+                    continue
+                for bi, band in enumerate(selected_bands):
+                    arr = chunk_data[band]
+                    result[bi, i] = arr[0] if arr.ndim == 3 else arr
 
         # Physical data is top-down; flip to ascending y order for xarray.
         result = result[:, :, ::-1, :]

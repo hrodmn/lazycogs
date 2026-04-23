@@ -148,11 +148,13 @@ Nearest-neighbor is the only supported resampling method.
 
 ## Concurrency model
 
-There are three nested layers of concurrency in a chunk read.
+There are four nested layers of concurrency in a chunk read.
 
-**Dask (chunk level).** When a dask-backed DataArray is computed, dask dispatches each chunk task to a worker thread. Each worker thread calls `_run_coroutine()` in `_backend.py`, which calls `asyncio.run()` to create a fresh event loop for that chunk. Worker threads are independent — they share no state except the thread-local store cache in `_store.py`.
+**Dask (chunk level).** When a dask-backed DataArray is computed, dask dispatches each chunk task to a worker thread. Each worker thread calls `_raw_getitem()` in `_backend.py`, which manages a thread pool for time steps and calls `_run_coroutine()` per time step. Worker threads are independent — they share no state except the thread-local store cache in `_store.py` and the thread-local DuckDB clients in `_backend.py`.
 
-**asyncio (item level).** Inside a chunk's event loop, `async_mosaic_chunk` processes overlapping items in batches of `max_concurrent_reads` (configurable via `open()`, default 32). Each batch fires `_read_item_band()` concurrently via `asyncio.gather` with an `asyncio.Semaphore` enforcing the limit. COG header reads and tile fetches from `async-geotiff` are all awaitable, so the event loop multiplexes them without blocking. Batching caps peak in-flight memory and enables true early exit: if the mosaic method signals completion within a batch, subsequent batches are never issued.
+**Time-step thread pool (time level).** `_raw_getitem()` processes all time steps in a chunk concurrently using a `ThreadPoolExecutor` capped at 8 workers. Each thread issues its DuckDB query under a per-instance `threading.Lock` (serialising DuckDB access while preserving the user-configured client), then calls `_run_coroutine()` to create a fresh event loop for its time step. Because DuckDB queries complete in tens of milliseconds, the lock is released long before the I/O phase finishes, so the expensive COG reads and reprojections for all time steps are still fully concurrent. The `warp_cache` is shared across threads: `compute_warp_map` is deterministic, so concurrent writes are safe — a duplicate computation just overwrites an identical result. This makes multi-date reads fast without Dask: all time steps in a chunk are in flight simultaneously.
+
+**asyncio (item level).** Inside a time step's event loop, `async_mosaic_chunk_multiband` processes overlapping items in batches of `max_concurrent_reads` (configurable via `open()`, default 32). Each batch fires `_read_item_bands()` concurrently via `asyncio.gather` with an `asyncio.Semaphore` enforcing the limit. COG header reads and tile fetches from `async-geotiff` are all awaitable, so the event loop multiplexes them without blocking. Batching caps peak in-flight memory and enables true early exit: if the mosaic method signals completion within a batch, subsequent batches are never issued.
 
 **Thread pool (CPU work per item).** `reproject_array` is synchronous CPU-bound work — there is no way to await it. Calling it directly in the coroutine would block the event loop and stall all other pending tile reads in the same `asyncio.gather`. Instead, each completed tile read immediately submits its reprojection to the event loop's default executor via `loop.run_in_executor(None, ...)`. The event loop is then free to process the next completed tile read while earlier reprojections run in parallel on other threads.
 
@@ -186,9 +188,9 @@ The async layer already handles spatial I/O concurrency. Dask spatial chunks add
 
 ### Where dask helps
 
-**The time dimension** is where dask pays off. Different time steps are fully independent, and the async layer does nothing to parallelize across them. `chunks={"time": 1}` lets dask run multiple time steps in parallel across worker threads, each with its own full-spatial-extent gather.
+**The time dimension.** Without dask, `_raw_getitem()` already parallelises up to 8 time steps concurrently within a single chunk read (see the time-step thread pool above). Dask adds a second level of time parallelism when the array has more time steps than fit in one chunk: `chunks={"time": N}` lets dask run multiple chunks in parallel across worker threads, each chunk running its own internal thread pool. For most use cases without dask, the built-in time-step parallelism is sufficient and avoids dask scheduling overhead entirely.
 
-**Band dimension chunking does not help.** Within a single time step, bands are read sequentially by `MultiBandStacBackendArray`. Splitting bands into separate dask tasks (`chunks={"band": 1}`) creates the same per-task overhead as spatial chunks (separate DuckDB queries, event loop creation, executor instantiation) without a meaningful parallelism benefit. Keep all bands in a single chunk.
+**Band dimension chunking does not help.** Within a single time step, all bands are read together by `_read_item_bands`. Splitting bands into separate dask tasks (`chunks={"band": 1}`) creates the same per-task overhead as spatial chunks (separate DuckDB queries, event loop creation, executor instantiation) without a meaningful parallelism benefit. Keep all bands in a single chunk.
 
 **Memory pressure** is the other legitimate reason to add spatial chunks. If the full array does not fit in memory, spatial chunking limits how much is materialised at once even if it costs throughput.
 
@@ -197,8 +199,7 @@ The async layer already handles spatial I/O concurrency. Dask spatial chunks add
 | Goal | Suggested `chunks` |
 |---|---|
 | Maximum throughput, array fits in memory | omit `chunks` (or `chunks={}`) |
-| Parallelise across time, memory is not a constraint | `{"time": 1}` |
-| Large array that does not fit in memory | `{"time": 1, "x": N, "y": N}` with N as large as memory allows |
+| Array too large to fit in memory | `{"time": 1, "x": N, "y": N}` with N as large as memory allows |
 
 When spatial chunks are necessary for memory reasons, making them as large as possible minimises per-chunk overhead and keeps the `asyncio.gather` fan-out wide. An alternative to adding spatial chunks is reducing `max_concurrent_reads` on `open()`: this limits peak in-flight memory per chunk without the overhead of smaller dask tasks or additional DuckDB queries.
 
