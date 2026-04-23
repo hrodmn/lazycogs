@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import xarray as xr
-from rustac import DuckdbClient
 from pyproj import CRS, Transformer
+from rustac import DuckdbClient
 from xarray.core import indexing
 
 from lazycogs._backend import (
@@ -21,6 +21,9 @@ from lazycogs._backend import (
 from lazycogs._grid import compute_output_grid
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
 from lazycogs._temporal import _TemporalGrouper, grouper_from_period
+
+if TYPE_CHECKING:
+    from obstore.store import ObjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +43,6 @@ class _CompactDateArray(np.ndarray):
 
     def __repr__(self) -> str:
         return self.__str__()
-
-
-if TYPE_CHECKING:
-    from obstore.store import ObjectStore
 
 
 def _discover_bands(

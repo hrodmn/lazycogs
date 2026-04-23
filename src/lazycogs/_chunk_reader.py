@@ -12,7 +12,7 @@ import numpy as np
 import numpy.ma as ma
 from affine import Affine
 from async_geotiff import GeoTIFF, Overview, RasterArray, Window
-from pyproj import CRS
+from pyproj import CRS, Transformer
 
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
 from lazycogs._reproject import (
@@ -45,7 +45,7 @@ def _target_res_and_transformer(
     chunk_height: int,
     dst_crs: CRS,
     src_crs: CRS,
-) -> tuple[float, object | None]:
+) -> tuple[float, Transformer | None]:
     """Return ``(target_res_native, transformer)`` for the dst→src reprojection.
 
     *transformer* is ``None`` when source and destination share a CRS, in which
@@ -122,7 +122,7 @@ def _chunk_bbox_native(
     chunk_affine: Affine,
     chunk_width: int,
     chunk_height: int,
-    transformer: object | None,
+    transformer: Transformer | None,
 ) -> tuple[float, float, float, float]:
     """Return the chunk's ``(minx, miny, maxx, maxy)`` in the source CRS.
 

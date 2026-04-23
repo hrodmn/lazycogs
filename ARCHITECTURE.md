@@ -8,7 +8,7 @@ lazycogs turns a geoparquet STAC item index into a lazy `(time, band, y, x)` xar
 
 Instead, the expected workflow is to run one `rustac.search_to("items.parquet", api_url, ...)` call upfront to download the matching items into a local geoparquet file, and then pass that file to `open()`. Per-chunk spatial filtering is then a fast DuckDB query, with no network traffic and no API involvement.
 
-For large pre-existing STAC archives stored as hive-partitioned parquet directories (e.g. `year=2023/month=01/...`), pass a `DuckdbClient(use_hive_partitioning=True)` via the `duckdb_client` parameter to enable DuckDB partition pruning. All internal queries use `duckdb_client.search()` regardless of whether a custom client is supplied; when `duckdb_client` is `None`, a plain `DuckdbClient()` is created automatically.
+For large pre-existing STAC archives stored as hive-partitioned parquet directories (e.g. `year=2023/month=01/...`), pass a `DuckdbClient(use_hive_partitioning=True)` via the `duckdb_client` parameter to enable DuckDB partition pruning. All internal queries in `open()` use `duckdb_client.search()`. When `duckdb_client` is `None`, a plain `DuckdbClient()` is created automatically.
 
 ## Two-phase execution model
 
@@ -274,7 +274,8 @@ When the store root does not align with the URL structure of the asset HREFs —
 
 | Package | Role |
 |---|---|
-| `rustac` | STAC search against local geoparquet files via DuckDB |
+| `rustac[arrow]` | STAC search against local geoparquet files via DuckDB; Arrow output via `arro3-core` |
+| `arro3-core` | Zero-copy Arrow table output from DuckDB queries (installed via `rustac[arrow]`) |
 | `async-geotiff` | Async COG header reads and windowed tile reads (Rust, no GDAL) |
 | `obstore` | Cloud object store abstraction layer for async-geotiff |
 | `pyproj` | CRS transforms: bbox reprojection, warp map generation |

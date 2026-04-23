@@ -12,7 +12,7 @@ dependencies = [
     "numpy>=2.4.4",
     "obstore>=0.9.2",
     "pyproj>=3.7.2",
-    "rustac>=0.9.9",
+    "rustac[arrow]>=0.9.10",
     "xarray>=2026.2.0",
 ]
 
