@@ -11,6 +11,7 @@ from pyproj import CRS
 
 from lazycogs._chunk_reader import (
     _apply_bands_with_warp_cache,
+    _drain_in_order,
     _native_window,
     _select_overview,
     async_mosaic_chunk,
@@ -197,6 +198,68 @@ def test_async_mosaic_chunk_limits_concurrent_reads():
         )
 
     assert peak_concurrent[0] <= max_concurrent
+
+
+# ---------------------------------------------------------------------------
+# _drain_in_order
+# ---------------------------------------------------------------------------
+
+
+def test_drain_in_order_preserves_source_order():
+    """Results are delivered to on_result in source order, not I/O arrival order."""
+
+    async def _run():
+        event = asyncio.Event()
+
+        async def slow():
+            await event.wait()
+            return "result-0"
+
+        async def fast():
+            await asyncio.sleep(0)
+            return "result-1"
+
+        tasks = [asyncio.ensure_future(slow()), asyncio.ensure_future(fast())]
+        call_order: list[int] = []
+
+        def on_result(idx: int, result) -> None:
+            call_order.append(idx)
+
+        drain = asyncio.ensure_future(
+            _drain_in_order(tasks, on_result, lambda: False, lambda i, e: None)
+        )
+        await asyncio.sleep(0)  # let fast() complete first (task index 1)
+        event.set()  # unblock slow() (task index 0)
+        await drain
+
+        assert call_order == [0, 1]
+
+    asyncio.run(_run())
+
+
+def test_drain_in_order_early_exit_on_is_done():
+    """Drain stops after is_done() returns True without consuming the rest."""
+
+    async def _run():
+        async def make_task(value):
+            await asyncio.sleep(0)
+            return value
+
+        tasks = [asyncio.ensure_future(make_task(i)) for i in range(5)]
+        results: list[int] = []
+        call_count = [0]
+
+        def on_result(idx: int, result) -> None:
+            results.append(result)
+            call_count[0] += 1
+
+        def is_done() -> bool:
+            return call_count[0] >= 2
+
+        await _drain_in_order(tasks, on_result, is_done, lambda i, e: None)
+        assert len(results) == 2
+
+    asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------

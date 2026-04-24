@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.ma as ma
@@ -427,6 +427,62 @@ async def _read_item_band(
     return results
 
 
+async def _drain_in_order(
+    tasks: list[asyncio.Task],
+    on_result: Callable[[int, Any], None],
+    is_done: Callable[[], bool],
+    on_error: Callable[[int, BaseException], None],
+) -> None:
+    """Feed completed tasks to on_result in source-list order.
+
+    Tasks may complete in any order (I/O arrival order). Results are buffered
+    by their original list index and handed to on_result strictly in the order
+    they appear in tasks, so callers see results in the same order as the
+    input list regardless of network timing.
+
+    Stops early when is_done() returns True. Cancels and drains all remaining
+    tasks on exit, whether done early or exhausted.
+
+    Args:
+        tasks: Pre-created asyncio tasks, in the order results should be fed.
+        on_result: Called with (index, result) for each completed task, in
+            source order. result is whatever the task returned (may be None).
+        is_done: Called after each on_result; if it returns True, remaining
+            tasks are cancelled and the function returns.
+        on_error: Called with (index, exception) for tasks that raised. The
+            task's slot is treated as None for ordering purposes.
+
+    """
+    task_index: dict[int, int] = {id(t): i for i, t in enumerate(tasks)}
+    completed: dict[int, Any] = {}
+    cursor = 0
+    pending: set[asyncio.Task] = set(tasks)
+    try:
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for fut in done:
+                idx = task_index[id(fut)]
+                try:
+                    completed[idx] = fut.result()
+                except BaseException as exc:
+                    on_error(idx, exc)
+                    completed[idx] = None
+
+            while cursor in completed:
+                result = completed.pop(cursor)
+                on_result(cursor, result)
+                cursor += 1
+                if is_done():
+                    return
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def async_mosaic_chunk(
     items: list[dict],
     bands: list[str],
@@ -516,50 +572,25 @@ async def async_mosaic_chunk(
         b: mosaic_method_cls() for b in bands
     }
 
-    # Launch all item reads as tasks up front; the semaphore inside _guarded
-    # caps in-flight reads at max_concurrent_reads. Tasks complete in I/O
-    # arrival order, but results are buffered and fed into the mosaic in
-    # source-list order so that FirstMethod sees items in the caller's sorted
-    # order regardless of network timing.
     task_list: list[asyncio.Task] = [
         asyncio.ensure_future(_guarded(item)) for item in items
     ]
-    task_index: dict[int, int] = {id(t): i for i, t in enumerate(task_list)}
-    completed: dict[int, dict[str, tuple[np.ndarray, float | None]] | None] = {}
-    cursor = 0
-    pending: set[asyncio.Task] = set(task_list)
-    try:
-        mosaic_done = False
-        while pending and not mosaic_done:
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
-            for fut in done:
-                idx = task_index[id(fut)]
-                try:
-                    completed[idx] = fut.result()
-                except BaseException as exc:
-                    _log_batch_failure(
-                        "bands", bands, items[idx].get("id", "<unknown>"), exc
-                    )
-                    completed[idx] = None
 
-            # Drain the in-order prefix into the mosaics.
-            while cursor in completed:
-                result = completed.pop(cursor)
-                cursor += 1
-                if result is None:
-                    continue
-                for band, (arr, effective_nodata) in result.items():
-                    mosaic_methods[band].feed(_array_to_masked(arr, effective_nodata))
-                if all(m.is_done for m in mosaic_methods.values()):
-                    mosaic_done = True
-                    break
-    finally:
-        for t in task_list:
-            if not t.done():
-                t.cancel()
-        await asyncio.gather(*task_list, return_exceptions=True)
+    def _feed(
+        idx: int, result: dict[str, tuple[np.ndarray, float | None]] | None
+    ) -> None:
+        if result is None:
+            return
+        for band, (arr, effective_nodata) in result.items():
+            mosaic_methods[band].feed(_array_to_masked(arr, effective_nodata))
+
+    def _done() -> bool:
+        return all(m.is_done for m in mosaic_methods.values())
+
+    def _error(idx: int, exc: BaseException) -> None:
+        _log_batch_failure("bands", bands, items[idx].get("id", "<unknown>"), exc)
+
+    await _drain_in_order(task_list, _feed, _done, _error)
 
     fill = nodata if nodata is not None else 0
     output: dict[str, np.ndarray] = {}
