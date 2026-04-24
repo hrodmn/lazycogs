@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -13,10 +14,7 @@ from pyproj import CRS, Transformer
 from rustac import DuckdbClient
 from xarray.core import indexing
 
-from lazycogs._backend import (
-    MultiBandStacBackendArray,
-    _run_coroutine,
-)
+from lazycogs._backend import MultiBandStacBackendArray
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
 from lazycogs._grid import compute_output_grid
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
@@ -281,137 +279,33 @@ def _build_dataarray(
     return da
 
 
-async def open_async(  # noqa: A001
+def _open_sync_impl(
     href: str,
     *,
-    datetime: str | None = None,
+    datetime: str | None,
     bbox: tuple[float, float, float, float],
     resolution: float,
     crs: str | CRS,
-    filter: str | dict[str, Any] | None = None,
-    ids: list[str] | None = None,
-    bands: list[str] | None = None,
-    chunks: dict[str, int] | None = None,
-    sortby: str | list[str | dict[str, str]] | None = None,
-    nodata: float | None = None,
-    dtype: str | np.dtype | None = None,
-    mosaic_method: type[MosaicMethodBase] | None = None,
-    time_period: str = "P1D",
-    store: ObjectStore | None = None,
-    max_concurrent_reads: int = 32,
-    path_from_href: Callable[[str], str] | None = None,
-    duckdb_client: DuckdbClient | None = None,
+    filter: str | dict[str, Any] | None,
+    ids: list[str] | None,
+    bands: list[str] | None,
+    chunks: dict[str, int] | None,
+    sortby: str | list[str | dict[str, str]] | None,
+    nodata: float | None,
+    dtype: str | np.dtype | None,
+    mosaic_method: type[MosaicMethodBase] | None,
+    time_period: str,
+    store: ObjectStore | None,
+    max_concurrent_reads: int,
+    path_from_href: Callable[[str], str] | None,
+    duckdb_client: DuckdbClient | None,
 ) -> xr.DataArray:
-    """Open a mosaic of STAC items as a lazy ``(time, band, y, x)`` DataArray.
+    """Synchronous Phase 0 implementation shared by open() and open_async().
 
-    Async entry point, suitable for use with ``await`` in Jupyter notebooks
-    and other async contexts.  For synchronous scripts, use :func:`open`.
-
-    ``href`` must be a path to a geoparquet file (``.parquet`` or
-    ``.geoparquet``) or, when *duckdb_client* is provided, to a
-    hive-partitioned parquet directory.
-
-    Phase 0 work (runs at call time):
-
-    1. Query the geoparquet index via DuckDB to discover bands and unique
-       time steps (applying ``bbox``, ``datetime``, ``filter``, and ``ids``
-       so the time axis contains no empty slices).
-    2. Compute the output grid (affine transform + coordinate arrays).
-    3. Create a ``MultiBandStacBackendArray`` wrapped in a
-       ``LazilyIndexedArray`` -- no pixel I/O yet.
-    4. Assemble an ``xr.Dataset``, convert to ``xr.DataArray``, and
-       optionally chunk with dask.
-
-    Args:
-        href: Path to a geoparquet file (``.parquet`` or ``.geoparquet``)
-            or a hive-partitioned parquet directory when *duckdb_client* is
-            provided with ``use_hive_partitioning=True``.
-        datetime: RFC 3339 datetime or range (e.g. ``"2023-01-01/2023-12-31"``)
-            used to pre-filter items from the parquet.
-        bbox: ``(minx, miny, maxx, maxy)`` in the target ``crs``.
-        crs: Target output CRS.
-        resolution: Output pixel size in ``crs`` units.
-        filter: CQL2 filter expression (text string or JSON dict) forwarded
-            to DuckDB queries, e.g. ``"eo:cloud_cover < 20"``.
-        ids: STAC item IDs to restrict the search to.
-        bands: Asset keys to include.  If ``None``, auto-detected from the
-            first matching item.
-        chunks: Chunk sizes passed to ``DataArray.chunk()``.  If ``None``
-            (default), returns a ``LazilyIndexedArray``-backed DataArray
-            where only the requested pixels are fetched on each access —
-            ideal for point or small-region queries.  Pass an explicit dict
-            to convert to a dask-backed array for parallel computation over
-            larger regions.
-        sortby: Sort keys forwarded to DuckDB queries.
-        nodata: No-data fill value for output arrays.
-        dtype: Output array dtype.  Defaults to ``float32``.
-        mosaic_method: Mosaic method class (not instance) to use.  Defaults
-            to :class:`~lazycogs._mosaic_methods.FirstMethod`.
-        time_period: ISO 8601 duration string controlling how items are
-            grouped into time steps.  Supported forms: ``PnD`` (days),
-            ``P1W`` (ISO calendar week), ``P1M`` (calendar month), ``P1Y``
-            (calendar year).  Defaults to ``"P1D"`` (one step per calendar
-            day), which preserves the previous behaviour.  Multi-day windows
-            such as ``"P16D"`` are aligned to an epoch of 2000-01-01.
-        store: Pre-configured obstore ``ObjectStore`` instance to use for all
-            asset reads.  Useful when credentials, custom endpoints, or
-            non-default options are needed without relying on automatic store
-            resolution from each HREF.  When ``None`` (default), each asset
-            URL is parsed to create or reuse a per-thread cached store.
-        max_concurrent_reads: Maximum number of COG reads to run concurrently
-            per chunk.  Items are processed in batches of this size, which
-            bounds peak in-flight memory when a chunk overlaps many files.
-            Methods that support early exit (e.g. the default
-            :class:`~lazycogs._mosaic_methods.FirstMethod`) will stop
-            reading once every output pixel is filled, so lower values also
-            reduce unnecessary I/O on dense datasets.  Defaults to 32.
-        path_from_href: Optional callable ``(href: str) -> str`` that extracts
-            the object path from an asset HREF.  When provided, it replaces the
-            default ``urlparse``-based extraction used in
-            :func:`~lazycogs._store.resolve`.  Most useful when combined with
-            a custom ``store`` whose root does not align with the URL path
-            structure of the asset HREFs.
-
-            Example — NASA LPDAAC proxy https url for S3 asset::
-
-                from obstore.store import S3Store
-                from urllib.parse import urlparse
-
-                store = S3Store(bucket="lp-prod-protected", ...)
-
-                def strip_bucket(href: str) -> str:
-                    # href: https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/path/to/file.tif
-                    # store is rooted at the bucket, so the path is just path/to/file.tif
-                    return urlparse(href).path.lstrip("/").removeprefix("lp-prod-protected/")
-
-                da = lazycogs.open("items.parquet", ..., store=store, path_from_href=strip_bucket)
-
-        duckdb_client: Optional ``DuckdbClient`` instance.  When
-            ``None`` (default), a plain ``DuckdbClient()`` is used,
-            which is equivalent to the previous ``rustac.search_sync``
-            behaviour.  Pass a custom client to enable features such as
-            hive-partitioned datasets::
-
-                import rustac, lazycogs
-
-                client = DuckdbClient(use_hive_partitioning=True)
-                da = lazycogs.open(
-                    "s3://bucket/stac/",
-                    duckdb_client=client,
-                    bbox=...,
-                    crs=...,
-                    resolution=...,
-                )
-
-    Returns:
-        Lazy ``xr.DataArray`` with dimensions ``(time, band, y, x)``.
-
-    Raises:
-        ValueError: If ``href`` is not a ``.parquet`` or ``.geoparquet`` file
-            and no *duckdb_client* is provided, if no matching items are
-            found, or if ``time_period`` is not a recognised ISO 8601
-            duration.
-
+    Performs band discovery, time-step discovery, grid computation, and
+    DataArray construction.  All work is synchronous; no event loop is
+    required.  Called directly by open() and via asyncio.to_thread by
+    open_async().
     """
     if duckdb_client is None:
         duckdb_client = DuckdbClient()
@@ -512,6 +406,153 @@ async def open_async(  # noqa: A001
     )
 
 
+async def open_async(  # noqa: A001
+    href: str,
+    *,
+    datetime: str | None = None,
+    bbox: tuple[float, float, float, float],
+    resolution: float,
+    crs: str | CRS,
+    filter: str | dict[str, Any] | None = None,
+    ids: list[str] | None = None,
+    bands: list[str] | None = None,
+    chunks: dict[str, int] | None = None,
+    sortby: str | list[str | dict[str, str]] | None = None,
+    nodata: float | None = None,
+    dtype: str | np.dtype | None = None,
+    mosaic_method: type[MosaicMethodBase] | None = None,
+    time_period: str = "P1D",
+    store: ObjectStore | None = None,
+    max_concurrent_reads: int = 32,
+    path_from_href: Callable[[str], str] | None = None,
+    duckdb_client: DuckdbClient | None = None,
+) -> xr.DataArray:
+    """Open a mosaic of STAC items as a lazy ``(time, band, y, x)`` DataArray.
+
+    Async entry point for use with ``await`` in Jupyter notebooks and other
+    async contexts.  Delegates to :func:`_open_sync_impl` via
+    ``asyncio.to_thread``, which runs the DuckDB queries in a worker thread
+    and genuinely yields the event loop during that work.  For synchronous
+    scripts, use :func:`open`.
+
+    ``href`` must be a path to a geoparquet file (``.parquet`` or
+    ``.geoparquet``) or, when *duckdb_client* is provided, to a
+    hive-partitioned parquet directory.
+
+    Args:
+        href: Path to a geoparquet file (``.parquet`` or ``.geoparquet``)
+            or a hive-partitioned parquet directory when *duckdb_client* is
+            provided with ``use_hive_partitioning=True``.
+        datetime: RFC 3339 datetime or range (e.g. ``"2023-01-01/2023-12-31"``)
+            used to pre-filter items from the parquet.
+        bbox: ``(minx, miny, maxx, maxy)`` in the target ``crs``.
+        crs: Target output CRS.
+        resolution: Output pixel size in ``crs`` units.
+        filter: CQL2 filter expression (text string or JSON dict) forwarded
+            to DuckDB queries, e.g. ``"eo:cloud_cover < 20"``.
+        ids: STAC item IDs to restrict the search to.
+        bands: Asset keys to include.  If ``None``, auto-detected from the
+            first matching item.
+        chunks: Chunk sizes passed to ``DataArray.chunk()``.  If ``None``
+            (default), returns a ``LazilyIndexedArray``-backed DataArray
+            where only the requested pixels are fetched on each access —
+            ideal for point or small-region queries.  Pass an explicit dict
+            to convert to a dask-backed array for parallel computation over
+            larger regions.
+        sortby: Sort keys forwarded to DuckDB queries.
+        nodata: No-data fill value for output arrays.
+        dtype: Output array dtype.  Defaults to ``float32``.
+        mosaic_method: Mosaic method class (not instance) to use.  Defaults
+            to :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        time_period: ISO 8601 duration string controlling how items are
+            grouped into time steps.  Supported forms: ``PnD`` (days),
+            ``P1W`` (ISO calendar week), ``P1M`` (calendar month), ``P1Y``
+            (calendar year).  Defaults to ``"P1D"`` (one step per calendar
+            day), which preserves the previous behaviour.  Multi-day windows
+            such as ``"P16D"`` are aligned to an epoch of 2000-01-01.
+        store: Pre-configured obstore ``ObjectStore`` instance to use for all
+            asset reads.  Useful when credentials, custom endpoints, or
+            non-default options are needed without relying on automatic store
+            resolution from each HREF.  When ``None`` (default), each asset
+            URL is parsed to create or reuse a per-thread cached store.
+        max_concurrent_reads: Maximum number of COG reads to run concurrently
+            per chunk.  Items are processed in batches of this size, which
+            bounds peak in-flight memory when a chunk overlaps many files.
+            Methods that support early exit (e.g. the default
+            :class:`~lazycogs._mosaic_methods.FirstMethod`) will stop
+            reading once every output pixel is filled, so lower values also
+            reduce unnecessary I/O on dense datasets.  Defaults to 32.
+        path_from_href: Optional callable ``(href: str) -> str`` that extracts
+            the object path from an asset HREF.  When provided, it replaces the
+            default ``urlparse``-based extraction used in
+            :func:`~lazycogs._store.resolve`.  Most useful when combined with
+            a custom ``store`` whose root does not align with the URL path
+            structure of the asset HREFs.
+
+            Example — NASA LPDAAC proxy https url for S3 asset::
+
+                from obstore.store import S3Store
+                from urllib.parse import urlparse
+
+                store = S3Store(bucket="lp-prod-protected", ...)
+
+                def strip_bucket(href: str) -> str:
+                    # href: https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/path/to/file.tif
+                    # store is rooted at the bucket, so the path is just path/to/file.tif
+                    return urlparse(href).path.lstrip("/").removeprefix("lp-prod-protected/")
+
+                da = lazycogs.open("items.parquet", ..., store=store, path_from_href=strip_bucket)
+
+        duckdb_client: Optional ``DuckdbClient`` instance.  When
+            ``None`` (default), a plain ``DuckdbClient()`` is used,
+            which is equivalent to the previous ``rustac.search_sync``
+            behaviour.  Pass a custom client to enable features such as
+            hive-partitioned datasets::
+
+                import rustac, lazycogs
+
+                client = DuckdbClient(use_hive_partitioning=True)
+                da = lazycogs.open(
+                    "s3://bucket/stac/",
+                    duckdb_client=client,
+                    bbox=...,
+                    crs=...,
+                    resolution=...,
+                )
+
+    Returns:
+        Lazy ``xr.DataArray`` with dimensions ``(time, band, y, x)``.
+
+    Raises:
+        ValueError: If ``href`` is not a ``.parquet`` or ``.geoparquet`` file
+            and no *duckdb_client* is provided, if no matching items are
+            found, or if ``time_period`` is not a recognised ISO 8601
+            duration.
+
+    """
+    return await asyncio.to_thread(
+        _open_sync_impl,
+        href,
+        datetime=datetime,
+        bbox=bbox,
+        crs=crs,
+        resolution=resolution,
+        filter=filter,
+        ids=ids,
+        bands=bands,
+        chunks=chunks,
+        sortby=sortby,
+        nodata=nodata,
+        dtype=dtype,
+        mosaic_method=mosaic_method,
+        time_period=time_period,
+        store=store,
+        max_concurrent_reads=max_concurrent_reads,
+        path_from_href=path_from_href,
+        duckdb_client=duckdb_client,
+    )
+
+
 def open(  # noqa: A001
     href: str,
     *,
@@ -535,12 +576,9 @@ def open(  # noqa: A001
 ) -> xr.DataArray:
     """Open a mosaic of STAC items as a lazy ``(time, band, y, x)`` DataArray.
 
-    Synchronous entry point.  Works in both regular Python scripts and Jupyter
-    notebooks.  When called from inside a running event loop (e.g. a Jupyter
-    kernel), the coroutine is dispatched to a background thread with its own
-    event loop so the caller does not need ``await``.  Use :func:`open_async`
-    directly if you are already in an async context and want to skip the thread
-    overhead.
+    Synchronous entry point.  Works in regular Python scripts and Jupyter
+    notebooks.  Calls :func:`_open_sync_impl` directly with no event-loop
+    overhead.  Use :func:`open_async` if you are already in an async context.
 
     ``href`` must be a path to a geoparquet file (``.parquet`` or
     ``.geoparquet``) or, when *duckdb_client* is provided, to a
@@ -602,25 +640,23 @@ def open(  # noqa: A001
             duration.
 
     """
-    return _run_coroutine(
-        open_async(
-            href,
-            datetime=datetime,
-            bbox=bbox,
-            crs=crs,
-            resolution=resolution,
-            filter=filter,
-            ids=ids,
-            bands=bands,
-            chunks=chunks,
-            sortby=sortby,
-            nodata=nodata,
-            dtype=dtype,
-            mosaic_method=mosaic_method,
-            time_period=time_period,
-            store=store,
-            max_concurrent_reads=max_concurrent_reads,
-            path_from_href=path_from_href,
-            duckdb_client=duckdb_client,
-        )
+    return _open_sync_impl(
+        href,
+        datetime=datetime,
+        bbox=bbox,
+        crs=crs,
+        resolution=resolution,
+        filter=filter,
+        ids=ids,
+        bands=bands,
+        chunks=chunks,
+        sortby=sortby,
+        nodata=nodata,
+        dtype=dtype,
+        mosaic_method=mosaic_method,
+        time_period=time_period,
+        store=store,
+        max_concurrent_reads=max_concurrent_reads,
+        path_from_href=path_from_href,
+        duckdb_client=duckdb_client,
     )
