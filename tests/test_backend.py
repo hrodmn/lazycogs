@@ -138,7 +138,7 @@ def test_raw_getitem_scalar_time_squeezes(wgs84):
 
 
 def test_raw_getitem_with_items_calls_mosaic(wgs84):
-    """When items are returned, async_mosaic_chunk_multiband is called and result used."""
+    """When items are returned, async_mosaic_chunk is called and result used."""
     arr = _make_array(wgs84, dates=["2023-01-01"])
     band = "B04"
     fake_items = [{"id": "item-1", "assets": {band: {"href": "s3://b/f.tif"}}}]
@@ -147,7 +147,7 @@ def test_raw_getitem_with_items_calls_mosaic(wgs84):
     with (
         patch("rustac.DuckdbClient.search", return_value=fake_items),
         patch(
-            "lazycogs._backend.async_mosaic_chunk_multiband",
+            "lazycogs._backend.async_mosaic_chunk",
             new_callable=AsyncMock,
             return_value=fake_chunk,
         ),
@@ -166,7 +166,7 @@ def test_raw_getitem_chunk_affine_offset(wgs84):
     with (
         patch("rustac.DuckdbClient.search", return_value=fake_items),
         patch(
-            "lazycogs._backend.async_mosaic_chunk_multiband",
+            "lazycogs._backend.async_mosaic_chunk",
             new_callable=AsyncMock,
             return_value={"B04": np.zeros((1, 1, 2), dtype=np.float32)},
         ),
@@ -222,7 +222,7 @@ def test_multiband_raw_getitem_no_items_returns_nodata(wgs84):
 
 
 def test_multiband_raw_getitem_calls_multiband_mosaic(wgs84):
-    """_raw_getitem calls async_mosaic_chunk_multiband once per time step, not per band."""
+    """_raw_getitem calls async_mosaic_chunk once per time step, not per band."""
     bands = ["B01", "B02"]
     multi = _make_multiband_array(wgs84, bands)
     fake_items = [

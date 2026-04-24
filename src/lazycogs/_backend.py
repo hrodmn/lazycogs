@@ -18,7 +18,7 @@ from rustac import DuckdbClient
 from xarray.backends.common import BackendArray
 from xarray.core import indexing
 
-from lazycogs._chunk_reader import async_mosaic_chunk_multiband
+from lazycogs._chunk_reader import async_mosaic_chunk
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
 from lazycogs._executor import get_max_workers
 from lazycogs._mosaic_methods import MosaicMethodBase
@@ -325,7 +325,7 @@ async def _run_one_date(
     """Read and mosaic all COGs for a single time step.
 
     Issues one DuckDB query for items overlapping the chunk at this date, then
-    calls async_mosaic_chunk_multiband to fetch and reproject all tiles.
+    calls async_mosaic_chunk to fetch and reproject all tiles.
     Returns None if no items match the query.
 
     Args:
@@ -373,7 +373,7 @@ async def _run_one_date(
     if not items:
         return None
     t0 = time.perf_counter()
-    chunk_result = await async_mosaic_chunk_multiband(
+    chunk_result = await async_mosaic_chunk(
         items=items,
         bands=selected_bands,
         chunk_affine=chunk_affine,
@@ -388,7 +388,7 @@ async def _run_one_date(
         path_fn=path_fn,
     )
     logger.debug(
-        "async_mosaic_chunk_multiband bands=%r date=%s (%d items, %dx%d px) took %.3fs",
+        "async_mosaic_chunk bands=%r date=%s (%d items, %dx%d px) took %.3fs",
         selected_bands,
         date,
         len(items),
@@ -495,7 +495,7 @@ class MultiBandStacBackendArray(BackendArray):
     One instance is created at ``open()`` time.  No pixel I/O happens until
     ``__getitem__`` is called inside a dask task.  Reads all selected bands
     together per time step via
-    :func:`~lazycogs._chunk_reader.async_mosaic_chunk_multiband`, issuing a
+    :func:`~lazycogs._chunk_reader.async_mosaic_chunk`, issuing a
     single DuckDB query per time step and sharing reprojection warp maps across
     bands that have identical source geometry.
 
@@ -603,7 +603,7 @@ class MultiBandStacBackendArray(BackendArray):
         """Materialise the chunk identified by ``key``.
 
         Reads all selected bands together per time step via
-        :func:`~lazycogs._chunk_reader.async_mosaic_chunk_multiband`, issuing
+        :func:`~lazycogs._chunk_reader.async_mosaic_chunk`, issuing
         a single DuckDB query per time step and sharing reprojection warp maps
         across bands that have identical source geometry.
 
