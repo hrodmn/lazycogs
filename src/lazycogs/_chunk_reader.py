@@ -553,23 +553,6 @@ async def async_mosaic_chunk(
         async with semaphore:
             return await _read_item_band(item, bands, ctx)
 
-    batch_size = min(max_concurrent_reads, len(items))
-    estimated_peak_mb = (
-        batch_size * len(bands) * chunk_width * chunk_height * 4 / (1024**2)
-    )
-    if estimated_peak_mb > 500:
-        logger.warning(
-            "Estimated peak in-flight memory for bands=%r is ~%.0f MB "
-            "(%d concurrent reads × %d bands × %dx%d px). "
-            "Lower max_concurrent_reads or add spatial chunks to reduce memory use.",
-            bands,
-            estimated_peak_mb,
-            batch_size,
-            len(bands),
-            chunk_width,
-            chunk_height,
-        )
-
     mosaic_methods: dict[str, MosaicMethodBase] = {
         b: mosaic_method_cls() for b in bands
     }
