@@ -85,9 +85,9 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 5. Logical y-indices (ascending, south-to-north) are converted to physical row indices (descending, north-to-south) to match the affine transform origin.
 6. The chunk's affine transform is derived: `chunk_affine = dst_affine * Affine.translation(x_start, y_start_physical)`.
 7. The chunk's EPSG:4326 bounding box is computed from the four corners of the chunk using `pyproj.Transformer`.
-8. For each time step:
-   a. `duckdb_client.search(parquet_path, bbox=chunk_bbox_4326, datetime=date)` returns only items whose geometry intersects this specific chunk for this date. Empty results short-circuit to nodata immediately.
-   b. `_run_coroutine(async_mosaic_chunk_multiband(...))` materialises all selected bands in one call. This helper uses `asyncio.run` normally, but falls back to a `ThreadPoolExecutor` worker when called from inside a running event loop (e.g. a Jupyter kernel) to avoid the "asyncio.run() cannot be called from a running event loop" error. The same helper is used at open time, so `open()` works in Jupyter without `await`.
+8. `_run_coroutine(_run_mosaic_all_dates(...))` drives all time steps from a single event loop invocation. `_run_coroutine` uses `asyncio.run` normally but falls back to a `ThreadPoolExecutor` worker when called from inside a running event loop (e.g. a Jupyter kernel). Inside `_run_mosaic_all_dates`, an `asyncio.gather` fans out one `_run_one_date` coroutine per time step, so COG reads overlap across dates:
+   a. Each `_run_one_date` acquires `_duckdb_lock` and calls `duckdb_client.search(parquet_path, bbox=chunk_bbox_4326, datetime=date)` to retrieve only items intersecting this chunk at this date. Empty results short-circuit to nodata immediately.
+   b. `async_mosaic_chunk_multiband(...)` materialises all selected bands for the time step concurrently.
 9. The result array is flipped vertically (`result[:, :, ::-1, :]`) to restore ascending y-order before squeezing and returning.
 
 `async_mosaic_chunk` in `_chunk_reader.py`:
