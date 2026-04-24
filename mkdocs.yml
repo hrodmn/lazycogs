@@ -19,7 +19,9 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Demo: demo.ipynb
+  - Examples:
+    - demo.ipynb
+    - hls.ipynb
   - Architecture: architecture.md
   - lazycogs vs odc-stac: lazycogs-odc-stac.ipynb
   - API Reference:
