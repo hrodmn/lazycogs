@@ -92,7 +92,7 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 
 `async_mosaic_chunk` in `_chunk_reader.py`:
 
-1. Processes items in batches of `max_concurrent_reads` (default 32) using `asyncio.gather` with an `asyncio.Semaphore` to bound the number of concurrent reads. This limits peak in-flight memory when a chunk overlaps many COGs.
+1. Launches all item reads as tasks up front with an `asyncio.Semaphore(max_concurrent_reads)` (default 32) capping how many are in flight at a time. Completions are consumed in arrival order via `asyncio.wait(..., FIRST_COMPLETED)`, so a slow COG never blocks already-finished reads from being fed into the mosaic. This limits peak in-flight memory when a chunk overlaps many COGs.
 2. For each item:
    a. `resolve(href, store)` returns an `(ObjectStore, path)` pair. If the caller supplied a `store`, it is returned unchanged and only the object path is extracted from the HREF; otherwise `obstore.store.from_url` constructs a store from `scheme://netloc` and caches it per thread.
    b. `await GeoTIFF.open(path, store=store)` opens the COG header.
@@ -100,7 +100,7 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
    d. `_native_window()` computes the pixel window in source space that covers the chunk bbox, clamped to the image extent.
    e. `await reader.read(window=window)` fetches the tile data.
    f. `reproject_array()` warps the read data to the destination chunk grid.
-3. Each reprojected array is fed to the `MosaicMethodBase` instance. If `mosaic_method.is_done` becomes true (e.g. `FirstMethod` with no nodata pixels remaining), the current batch finishes and all remaining batches are skipped — so items are never read once the mosaic is complete.
+3. Each reprojected array is fed to the `MosaicMethodBase` instance as its read completes. If `mosaic_method.is_done` becomes true (e.g. `FirstMethod` with no nodata pixels remaining), the consumer loop breaks and a `finally` block cancels and drains any still-pending reads — so items waiting on the semaphore are never started once the mosaic is complete.
 4. Returns `mosaic_method.data` as a `(bands, chunk_height, chunk_width)` array.
 
 ## Grid and coordinate convention
@@ -154,7 +154,7 @@ There are four nested layers of concurrency in a chunk read.
 
 **asyncio (time + item level).** A single `asyncio.run()` call (via `_run_coroutine`) handles the entire chunk. Inside, `asyncio.gather` fans out one `_one_date` coroutine per time step, so all time steps are in flight concurrently within the same event loop. DuckDB queries are dispatched to the loop's thread executor via `loop.run_in_executor` so they don't block the event loop; a `threading.Lock` on the `DuckdbClient` serialises actual DB access for both within-loop and cross-Dask-task safety. Once each DuckDB query returns, its mosaic coroutine proceeds immediately — COG reads for all time steps overlap in the event loop's I/O layer. Because all time steps share a single event loop and therefore a single bounded reprojection executor, the reprojection thread count stays at `get_max_workers()` regardless of how many time steps are in the chunk (no thread explosion). The `warp_cache` is shared across coroutines: `compute_warp_map` is deterministic, so concurrent writes are safe.
 
-**asyncio (item level).** Inside a time step's event loop, `async_mosaic_chunk_multiband` processes overlapping items in batches of `max_concurrent_reads` (configurable via `open()`, default 32). Each batch fires `_read_item_bands()` concurrently via `asyncio.gather` with an `asyncio.Semaphore` enforcing the limit. COG header reads and tile fetches from `async-geotiff` are all awaitable, so the event loop multiplexes them without blocking. Batching caps peak in-flight memory and enables true early exit: if the mosaic method signals completion within a batch, subsequent batches are never issued.
+**asyncio (item level).** Inside a time step's event loop, `async_mosaic_chunk_multiband` launches one `_read_item_bands()` task per overlapping item up front, with an `asyncio.Semaphore(max_concurrent_reads)` (configurable via `open()`, default 32) capping how many reads run concurrently. Completions are consumed in arrival order via `asyncio.wait(..., FIRST_COMPLETED)`, so a slow COG does not hold back reads that have already finished — the mosaic is fed the moment each read returns. COG header reads and tile fetches from `async-geotiff` are all awaitable, so the event loop multiplexes them without blocking. Early exit is preserved: once the mosaic method signals completion, remaining tasks are cancelled in a `finally` block, and items still waiting on the semaphore never start.
 
 **Thread pool (CPU work per item).** `reproject_array` is synchronous CPU-bound work — there is no way to await it. Calling it directly in the coroutine would block the event loop and stall all other pending tile reads in the same `asyncio.gather`. Instead, each completed tile read immediately submits its reprojection to the event loop's default executor via `loop.run_in_executor(None, ...)`. The event loop is then free to process the next completed tile read while earlier reprojections run in parallel on other threads.
 

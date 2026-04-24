@@ -397,37 +397,42 @@ async def async_mosaic_chunk(
             chunk_height,
         )
 
-    # Process items in batches of max_concurrent_reads so that:
-    # 1. At most max_concurrent_reads arrays are held in memory at once.
-    # 2. When the mosaic method signals is_done, we skip remaining batches.
-    done = False
-    for batch_start in range(0, len(items), max_concurrent_reads):
-        batch = items[batch_start : batch_start + max_concurrent_reads]
-        batch_results = await asyncio.gather(
-            *[_guarded(item) for item in batch],
-            return_exceptions=True,
-        )
+    # Launch all item reads as tasks up front; the semaphore inside _guarded
+    # caps in-flight reads at max_concurrent_reads. Consume completions in
+    # arrival order so a slow COG does not block already-finished reads from
+    # being fed into the mosaic, and exit as soon as the mosaic is done.
+    tasks: dict[asyncio.Task, dict] = {
+        asyncio.ensure_future(_guarded(item)): item for item in items
+    }
+    pending: set[asyncio.Task] = set(tasks)
+    try:
+        mosaic_done = False
+        while pending and not mosaic_done:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for fut in done:
+                item = tasks[fut]
+                try:
+                    result = fut.result()
+                except BaseException as exc:
+                    _log_batch_failure("band", band, item.get("id", "<unknown>"), exc)
+                    continue
 
-        for j, result in enumerate(batch_results):
-            item_idx = batch_start + j
-            if isinstance(result, BaseException):
-                _log_batch_failure(
-                    "band", band, items[item_idx].get("id", "<unknown>"), result
-                )
-                continue
+                if result is None:
+                    continue
 
-            if result is None:
-                continue
+                arr, effective_nodata = result
+                mosaic_method.feed(_array_to_masked(arr, effective_nodata))
 
-            arr, effective_nodata = result
-            mosaic_method.feed(_array_to_masked(arr, effective_nodata))
-
-            if mosaic_method.is_done:
-                done = True
-                break
-
-        if done:
-            break
+                if mosaic_method.is_done:
+                    mosaic_done = True
+                    break
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     if mosaic_method._mosaic is None:
         bands = 1
@@ -718,34 +723,42 @@ async def async_mosaic_chunk_multiband(
         b: mosaic_method_cls() for b in bands
     }
 
-    done = False
-    for batch_start in range(0, len(items), max_concurrent_reads):
-        batch = items[batch_start : batch_start + max_concurrent_reads]
-        batch_results = await asyncio.gather(
-            *[_guarded(item) for item in batch],
-            return_exceptions=True,
-        )
+    # Launch all item reads as tasks up front; the semaphore inside _guarded
+    # caps in-flight reads at max_concurrent_reads. Consume completions in
+    # arrival order so a slow COG does not block already-finished reads from
+    # being fed into the mosaics, and exit as soon as every band is done.
+    tasks: dict[asyncio.Task, dict] = {
+        asyncio.ensure_future(_guarded(item)): item for item in items
+    }
+    pending: set[asyncio.Task] = set(tasks)
+    try:
+        mosaic_done = False
+        while pending and not mosaic_done:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for fut in done:
+                item = tasks[fut]
+                try:
+                    result = fut.result()
+                except BaseException as exc:
+                    _log_batch_failure("bands", bands, item.get("id", "<unknown>"), exc)
+                    continue
 
-        for j, result in enumerate(batch_results):
-            item_idx = batch_start + j
-            if isinstance(result, BaseException):
-                _log_batch_failure(
-                    "bands", bands, items[item_idx].get("id", "<unknown>"), result
-                )
-                continue
+                if result is None:
+                    continue
 
-            if result is None:
-                continue
+                for band, (arr, effective_nodata) in result.items():
+                    mosaic_methods[band].feed(_array_to_masked(arr, effective_nodata))
 
-            for band, (arr, effective_nodata) in result.items():
-                mosaic_methods[band].feed(_array_to_masked(arr, effective_nodata))
-
-            if all(m.is_done for m in mosaic_methods.values()):
-                done = True
-                break
-
-        if done:
-            break
+                if all(m.is_done for m in mosaic_methods.values()):
+                    mosaic_done = True
+                    break
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     fill = nodata if nodata is not None else 0
     output: dict[str, np.ndarray] = {}

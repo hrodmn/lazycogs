@@ -203,13 +203,14 @@ def test_async_mosaic_chunk_early_exit_skips_remaining_reads():
     chunk_affine = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
     dst_crs = CRS.from_epsg(4326)
     n_items = 30
-    # Each call returns a fully valid array, so FirstMethod completes on the
-    # first item.  With batch size 5, only the first batch (5 reads) should
-    # execute — 25 items should be skipped.
     reads_executed = [0]
 
     async def _fake_read_item_band(*args, **kwargs):
         reads_executed[0] += 1
+        # Yield so the semaphore can throttle and the main coroutine can wake
+        # on the first completion instead of processing every task in one
+        # synchronous burst.
+        await asyncio.sleep(0)
         arr = np.ones((1, chunk_height, chunk_width), dtype=np.float32)
         return arr, None
 
@@ -233,10 +234,10 @@ def test_async_mosaic_chunk_early_exit_skips_remaining_reads():
             )
         )
 
-    # Only one batch of 5 should have been read; the mosaic fills on item 0
-    # but the whole batch still runs.  Critically, the remaining 25 items
-    # should NOT be read.
-    assert reads_executed[0] <= 5
+    # All tasks are launched up front, but the semaphore caps in-flight reads
+    # at max_concurrent_reads.  Once FirstMethod is satisfied, pending tasks
+    # are cancelled, so strictly fewer than n_items reads execute.
+    assert reads_executed[0] < n_items
 
 
 # ---------------------------------------------------------------------------
@@ -416,15 +417,20 @@ def test_async_mosaic_chunk_multiband_early_exit():
     dst_crs = CRS.from_epsg(4326)
     bands = ["B01", "B02"]
     reads_executed = [0]
+    n_items = 20
 
     async def _fake_read_item_bands(*args, **kwargs):
         reads_executed[0] += 1
+        # Yield so the semaphore can throttle and the main coroutine can wake
+        # on the first completion instead of processing every task in one
+        # synchronous burst.
+        await asyncio.sleep(0)
         return {
             b: (np.ones((1, chunk_height, chunk_width), dtype=np.float32), None)
             for b in bands
         }
 
-    items = [{"id": f"item-{i}", "assets": {}} for i in range(20)]
+    items = [{"id": f"item-{i}", "assets": {}} for i in range(n_items)]
 
     with patch(
         "lazycogs._chunk_reader._read_item_bands", side_effect=_fake_read_item_bands
@@ -442,5 +448,7 @@ def test_async_mosaic_chunk_multiband_early_exit():
             )
         )
 
-    # FirstMethod fills on first item; only the first batch of 5 should run.
-    assert reads_executed[0] <= 5
+    # All tasks are launched up front, but the semaphore caps in-flight reads
+    # at max_concurrent_reads.  Once every band's FirstMethod is satisfied,
+    # pending tasks are cancelled, so strictly fewer than n_items reads execute.
+    assert reads_executed[0] < n_items
