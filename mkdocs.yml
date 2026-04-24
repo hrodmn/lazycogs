@@ -24,6 +24,7 @@ nav:
     - hls.ipynb
   - Architecture: architecture.md
   - lazycogs vs odc-stac: lazycogs-odc-stac.ipynb
+  - Contributing: CONTRIBUTING.md
   - API Reference:
     - Open: api/open.md
     - Mosaic Methods: api/mosaic.md
@@ -50,6 +51,7 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.superfences
+  - pymdownx.snippets
   - admonition
   - toc:
       permalink: true

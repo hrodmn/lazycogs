@@ -1,3 +1,15 @@
+/* Hide the site name text in the header — the SVG logo already links home.
+   visibility:hidden preserves the flex:1 space so search/source stay right-aligned. */
+.md-header__title {
+  visibility: hidden;
+}
+
+/* Hide the auto-generated "Home" h1 on the index page — the SVG logo serves as the title.
+   Targeted via :has() because data-md-url is set by JS after CSS parse time. */
+.md-typeset h1:has(+ p > img[alt="lazycogs"]) {
+  display: none;
+}
+
 /* Fix xarray dataset HTML representation in jupyter notebook renderings.
    See https://github.com/danielfrg/mkdocs-jupyter/issues/164 */
 
