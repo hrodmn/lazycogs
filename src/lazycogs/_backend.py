@@ -635,11 +635,6 @@ class MultiBandStacBackendArray(BackendArray):
         )
 
         fill = self.nodata if self.nodata is not None else 0
-        result = np.full(
-            (len(band_indices), len(time_indices), win.chunk_height, win.chunk_width),
-            fill,
-            dtype=self.dtype,
-        )
 
         # warp_cache is shared across time steps: tiles with the same native
         # CRS and window transform reuse the same WarpMap. Concurrent writes
@@ -649,38 +644,52 @@ class MultiBandStacBackendArray(BackendArray):
 
         filter_fields = _extract_filter_fields(self.filter) if self.filter else set()
 
-        for i, chunk_data in enumerate(
-            _run_coroutine(
-                _run_mosaic_all_dates(
-                    time_indices,
-                    dates=self.dates,
-                    duckdb_client=self.duckdb_client,
-                    parquet_path=self.parquet_path,
-                    duckdb_lock=self._duckdb_lock,
-                    chunk_bbox_4326=win.chunk_bbox_4326,
-                    sortby=self.sortby,
-                    filter_expr=self.filter,
-                    ids=self.ids,
-                    filter_fields=filter_fields,
-                    selected_bands=selected_bands,
-                    chunk_affine=win.chunk_affine,
-                    dst_crs=self.dst_crs,
-                    chunk_width=win.chunk_width,
-                    chunk_height=win.chunk_height,
-                    nodata=self.nodata,
-                    mosaic_method_cls=self.mosaic_method_cls,
-                    store=self.store,
-                    max_concurrent_reads=self.max_concurrent_reads,
-                    warp_cache=warp_cache,
-                    path_fn=self.path_from_href,
-                )
+        all_chunk_data = _run_coroutine(
+            _run_mosaic_all_dates(
+                time_indices,
+                dates=self.dates,
+                duckdb_client=self.duckdb_client,
+                parquet_path=self.parquet_path,
+                duckdb_lock=self._duckdb_lock,
+                chunk_bbox_4326=win.chunk_bbox_4326,
+                sortby=self.sortby,
+                filter_expr=self.filter,
+                ids=self.ids,
+                filter_fields=filter_fields,
+                selected_bands=selected_bands,
+                chunk_affine=win.chunk_affine,
+                dst_crs=self.dst_crs,
+                chunk_width=win.chunk_width,
+                chunk_height=win.chunk_height,
+                nodata=self.nodata,
+                mosaic_method_cls=self.mosaic_method_cls,
+                store=self.store,
+                max_concurrent_reads=self.max_concurrent_reads,
+                warp_cache=warp_cache,
+                path_fn=self.path_from_href,
             )
-        ):
+        )
+
+        out_shape = (
+            len(band_indices),
+            len(time_indices),
+            win.chunk_height,
+            win.chunk_width,
+        )
+        result: np.ndarray | None = None
+
+        for i, chunk_data in enumerate(all_chunk_data):
             if chunk_data is None:
                 continue
+            if result is None:
+                result = np.full(out_shape, fill, dtype=self.dtype)
             for bi, band in enumerate(selected_bands):
                 arr = chunk_data[band]
-                result[bi, i] = arr[0] if arr.ndim == 3 else arr
+                slice_ = arr[0] if arr.ndim == 3 else arr
+                result[bi, i] = slice_.astype(self.dtype, copy=False)
+
+        if result is None:
+            result = np.full(out_shape, fill, dtype=self.dtype)
 
         # Physical data is top-down; flip to ascending y order for xarray.
         result = result[:, :, ::-1, :]
