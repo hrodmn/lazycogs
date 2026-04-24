@@ -157,6 +157,7 @@ def _resolve_spatial_window(
     dst_width: int,
     dst_affine: Affine,
     dst_crs: CRS,
+    dst_to_4326: Transformer | None,
 ) -> _SpatialWindow:
     """Resolve spatial indexers to a concrete chunk window.
 
@@ -172,6 +173,8 @@ def _resolve_spatial_window(
         dst_width: Full output grid width in pixels.
         dst_affine: Affine transform of the full output grid.
         dst_crs: CRS of the output grid.
+        dst_to_4326: Pre-built transformer from ``dst_crs`` to EPSG:4326, or
+            ``None`` when ``dst_crs`` is already EPSG:4326.
 
     Returns:
         A :class:`_SpatialWindow` describing the chunk geometry.
@@ -210,12 +213,10 @@ def _resolve_spatial_window(
     maxx = minx + chunk_width * chunk_affine.a
     miny = maxy + chunk_height * chunk_affine.e  # e < 0
 
-    epsg_4326 = CRS.from_epsg(4326)
-    if dst_crs.equals(epsg_4326):
+    if dst_to_4326 is None:
         chunk_bbox_4326 = [minx, miny, maxx, maxy]
     else:
-        transformer = Transformer.from_crs(dst_crs, epsg_4326, always_xy=True)
-        xs, ys = transformer.transform(
+        xs, ys = dst_to_4326.transform(
             [minx, maxx, minx, maxx],
             [maxy, maxy, miny, miny],
         )
@@ -553,13 +554,21 @@ class MultiBandStacBackendArray(BackendArray):
     max_concurrent_reads: int = field(default=32)
     path_from_href: Callable[[str], str] | None = field(default=None)
     shape: tuple[int, ...] = field(init=False)
+    _dst_to_4326: Transformer | None = field(init=False, repr=False, compare=False)
     _duckdb_lock: threading.Lock = field(
         init=False, repr=False, compare=False, default_factory=threading.Lock
     )
 
     def __post_init__(self) -> None:
-        """Derive shape from the other fields."""
+        """Derive shape and cache the dst→EPSG:4326 transformer."""
         self.shape = (len(self.bands), len(self.dates), self.dst_height, self.dst_width)
+        epsg_4326 = CRS.from_epsg(4326)
+        if self.dst_crs.equals(epsg_4326):
+            self._dst_to_4326: Transformer | None = None
+        else:
+            self._dst_to_4326 = Transformer.from_crs(
+                self.dst_crs, epsg_4326, always_xy=True
+            )
 
     def __repr__(self) -> str:
         """Return a compact string representation."""
@@ -616,7 +625,13 @@ class MultiBandStacBackendArray(BackendArray):
 
         time_indices, squeeze_time = _resolve_time_indices(time_key, len(self.dates))
         win = _resolve_spatial_window(
-            y_key, x_key, self.dst_height, self.dst_width, self.dst_affine, self.dst_crs
+            y_key,
+            x_key,
+            self.dst_height,
+            self.dst_width,
+            self.dst_affine,
+            self.dst_crs,
+            self._dst_to_4326,
         )
 
         fill = self.nodata if self.nodata is not None else 0

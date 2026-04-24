@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from rustac import DuckdbClient
 from affine import Affine
-from pyproj import CRS
+from pyproj import CRS, Transformer
 
 from lazycogs._backend import (
     MultiBandStacBackendArray,
@@ -70,6 +70,7 @@ def test_chunk_bbox_4326_identity_in_wgs84(wgs84):
         dst_width=4,
         dst_affine=dst_affine,
         dst_crs=wgs84,
+        dst_to_4326=None,
     )
     assert win.chunk_bbox_4326 == pytest.approx([10.0, 49.0, 14.0, 50.0])
 
@@ -84,6 +85,7 @@ def test_chunk_bbox_4326_utm_transforms(utm32n):
         dst_width=10,
         dst_affine=dst_affine,
         dst_crs=utm32n,
+        dst_to_4326=Transformer.from_crs(utm32n, CRS.from_epsg(4326), always_xy=True),
     )
     minx, miny, maxx, maxy = win.chunk_bbox_4326
     assert -180 <= minx <= 180
@@ -102,6 +104,7 @@ def test_chunk_bbox_4326_ordering(utm32n):
         dst_width=100,
         dst_affine=dst_affine,
         dst_crs=utm32n,
+        dst_to_4326=Transformer.from_crs(utm32n, CRS.from_epsg(4326), always_xy=True),
     )
     minx, miny, maxx, maxy = win.chunk_bbox_4326
     assert minx < maxx
