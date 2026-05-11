@@ -3,7 +3,7 @@
 from lazycogs._chunk_reader import read_chunk, read_chunk_async
 from lazycogs._core import open  # noqa: A004
 from lazycogs._executor import set_reproject_workers
-from lazycogs._explain import (  # noqa: F401 — registers da.stac_cog accessor
+from lazycogs._explain import (  # noqa: F401 — registers da.lazycogs accessor
     ChunkRead,
     CogRead,
     ExplainPlan,

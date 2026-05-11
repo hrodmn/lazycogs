@@ -33,8 +33,6 @@ Here is a summary of the libraries lazycogs uses for each step:
 
 ## Installation
 
-Not yet published to PyPI. Install directly from GitHub:
-
 ```bash
 pip install lazycogs
 ```
@@ -78,7 +76,7 @@ without blocking the event loop:
 
 ```python
 # Fetch data asynchronously and load into memory in-place.
-subset = await da.isel(x=slice(0, 10), y=slice(0, 10), time=slice(0, 10).load_async()
+subset = await da.isel(x=slice(0, 10), y=slice(0, 10), time=slice(0, 10)).load_async()
 ```
 
 `load_async` uses xarray's async protocol, which dispatches through
