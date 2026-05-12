@@ -98,6 +98,6 @@ da = lazycogs.open("items.parquet", ..., store=store)
 
 `NasaEarthdataAsyncCredentialProvider` is not supported. It creates an `aiohttp` session bound to the event loop active when it is constructed. lazycogs runs each chunk read in a short-lived event loop (and in Jupyter, in a separate thread with its own loop), so the session ends up attached to the wrong loop and raises a runtime error. The synchronous provider uses `requests`, which is event-loop-agnostic and works correctly in all contexts.
 
-See [NASA HLS example notebook](../notebooks/hls.ipynb) for a full worked example with direct S3 access.
+See [NASA HLS S3 example notebook](../notebooks/hls-s3.ipynb) for a full worked example with direct S3 access.
 
 See also: [API reference for open()](../api/open.md), [API reference for store_for()](../api/utils.md), [STAC item queries guide](stac-search.md)

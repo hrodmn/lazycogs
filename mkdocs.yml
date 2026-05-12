@@ -30,7 +30,10 @@ nav:
   - Examples:
       - Midwest US daily array: notebooks/demo_midwest_daily.ipynb
       - Southwest US monthly composite: notebooks/demo_southwest_monthly.ipynb
-      - NASA HLS: notebooks/hls.ipynb
+      - NASA HLS:
+          - notebooks/hls-https.ipynb
+          - notebooks/hls-s3.ipynb
+      - CMR STAC example: notebooks/cmr-lpcloud-fix-assets.ipynb
       - Experimental async workflow: notebooks/async-workflow.ipynb
       - lazycogs vs odc-stac: notebooks/lazycogs-odc-stac.ipynb
   - Performance: performance.md
