@@ -33,6 +33,7 @@ nav:
       - NASA HLS:
           - notebooks/hls-https.ipynb
           - notebooks/hls-s3.ipynb
+      - CMR STAC example: notebooks/cmr-lpcloud-fix-assets.ipynb
       - Experimental async workflow: notebooks/async-workflow.ipynb
       - lazycogs vs odc-stac: notebooks/lazycogs-odc-stac.ipynb
   - Performance: performance.md
