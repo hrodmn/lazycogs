@@ -34,7 +34,7 @@ Benchmarks live in `tests/benchmarks/` and are excluded from the default test ru
 uv run python scripts/prepare_benchmark_data.py
 ```
 
-This queries the Element84 Earth Search STAC API, downloads a small set of COG assets to `.benchmark_data/`, and writes local parquet index files. Pass `--overwrite` to re-download if needed.
+This queries the Element84 Earth Search STAC API, downloads a small set of COG assets to `.benchmark_data/`, and writes local parquet index files. The parquet files are always refreshed to point at the current checkout's local `.benchmark_data/cogs/` paths, so rerunning the script fixes stale `file://` HREFs after moving the repo. Pass `--overwrite` to force re-downloading the raw query and COG files.
 
 Once the data is in place:
 
