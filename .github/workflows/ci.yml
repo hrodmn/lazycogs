@@ -18,9 +18,15 @@ jobs:
         with:
           version: "latest"
 
+      - name: Install Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
       # Ensure docs build without warnings
       - name: Check docs
         run: uv run --group docs mkdocs build --strict
+
+      - name: Check slides
+        run: quarto render slides/lightning-talk/index.qmd --to revealjs --output-dir /tmp/lazycogs-lightning-talk
 
       # Use ruff-action so we get annotations in the Github UI
       - uses: astral-sh/ruff-action@v3

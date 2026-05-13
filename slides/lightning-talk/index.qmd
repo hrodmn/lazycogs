@@ -1,0 +1,46 @@
+---
+title: "lazycogs"
+subtitle: "A short origin story"
+author: "Henry Rodman"
+date: last-modified
+pagetitle: "lazycogs"
+format:
+  revealjs:
+    center: false
+    center-title-slide: false
+    slide-number: true
+    preview-links: auto
+    logo: assets/logo_no_text.png
+    footer: "[developmentseed.org/lazycogs](https://developmentseed.org/lazycogs)"
+    theme: white
+    css: styles.css
+    navigation-mode: linear
+    controls-layout: bottom-right
+    controls-tutorial: false
+    transition: fade
+    chalkboard:
+      buttons: false
+---
+
+
+## Back story
+
+- I got hooked on STAC when I saw how `stackstac` allowed you to effortlessly combine many raster files for use in xarray.
+- lazy loading FTW!
+- I got less excited when I started trying to manage Dask clusters.
+- so I changed my title to Data Engineer and started hammering STAC APIs with concurrent queries from distributed workflows.
+
+## Imagining a better future
+
+- `rustac` opens up rapid STAC queries via `stac-geoparquet` + `duckdb`.
+- BUT to get GDAL to work nicely with `stac-geoparquet` you need a non-standard install.
+  - i.e. not the one that ships with `rasterio`
+- but maybe we don't need an entire GDAL for this one specific use-case: COGs
+  - `async-geotiff`!
+
+::: {.mini-grid}
+<div class="mini-card"><strong>STAC queries</strong><br/><code>rustac</code> + <code>stac-geoparquet</code> + <code>duckdb</code></div>
+<div class="mini-card"><strong>COG reads</strong><br/><code>async-geotiff</code></div>
+<div class="mini-card"><strong>Result</strong><br/>a simpler path to lazy raster access</div>
+:::
+

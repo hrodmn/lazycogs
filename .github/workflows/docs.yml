@@ -6,24 +6,54 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
         run: uv python install 3.13
 
+      - name: Install Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
       - name: Install docs dependencies
         run: uv sync --group docs
 
-      - name: Deploy docs
-        run: uv run mkdocs gh-deploy --force
+      - name: Build MkDocs site
+        run: uv run mkdocs build --strict --site-dir site
+
+      - name: Build Reveal.js slides
+        run: quarto render slides/lightning-talk/index.qmd --to revealjs --output-dir site/slides/lightning-talk
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

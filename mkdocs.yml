@@ -37,6 +37,8 @@ nav:
       - Experimental async workflow: notebooks/async-workflow.ipynb
       - lazycogs vs odc-stac: notebooks/lazycogs-odc-stac.ipynb
   - Performance: performance.md
+  - Talks:
+      - Lightning talk slides: talks/lightning-talk.md
   - API Reference:
       - open / open_async: api/open.md
       - Mosaic methods: api/mosaic.md

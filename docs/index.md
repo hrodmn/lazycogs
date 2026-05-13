@@ -87,4 +87,4 @@ event loop. Multiple concurrent chunk reads overlap naturally, so the
 async path can be faster than the synchronous `da.compute()` when
 reading many chunks inside an already-running loop.
 
-Get started with the [Quickstart](notebooks/quickstart.ipynb). Evaluating lazycogs against alternatives? See [Performance](performance.md).
+Get started with the [Quickstart](notebooks/quickstart.ipynb). Evaluating lazycogs against alternatives? See [Performance](performance.md). Giving a short intro? Use the [lightning talk slides](talks/lightning-talk.md).

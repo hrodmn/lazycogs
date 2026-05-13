@@ -274,10 +274,14 @@ When the store root does not align with the URL structure of the asset HREFs —
 
 ## Documentation
 
-The documentation site is built with [mkdocs-material](https://squidfunk.github.io/mkdocs-material/) and deployed to GitHub Pages via GitHub Actions (`.github/workflows/docs.yml`). It includes:
+The documentation site is built with [mkdocs-material](https://squidfunk.github.io/mkdocs-material/) and deployed to GitHub Pages via GitHub Actions (`.github/workflows/docs.yml`). The workflow builds the MkDocs site into `site/`, renders the Reveal.js lightning-talk deck from `slides/lightning-talk/index.qmd` into `site/slides/lightning-talk/`, and then publishes the combined static site with GitHub Pages. Shared brand assets live at the repository root, and both `docs/` and `slides/lightning-talk/assets/` expose the reused SVG files via symlinks so MkDocs and Quarto can resolve them as local assets. It includes:
 
-- **Introduction**: rendered from `README.md` (symlinked as `docs/index.md`)
-- **Examples**: two Jupyter notebooks rendered by `mkdocs-jupyter` — `docs/demo_midwest_daily.ipynb` (daily Sentinel-2 array over the Midwest US) and `docs/demo_southwest_monthly.ipynb` (monthly low-cloud composite over the US Southwest)
+- **Introduction**: rendered from `README.md` (mirrored as `docs/index.md`)
+- **Examples**: Jupyter notebooks rendered by `mkdocs-jupyter`
 - **API Reference**: auto-generated from docstrings by `mkdocstrings[python]`
+- **Slides**: a Quarto-authored Reveal.js deck for a short lazycogs lightning talk
 
-To preview locally: `uv run mkdocs serve`
+To preview locally:
+
+- Docs: `uv run mkdocs serve`
+- Slides: `quarto preview slides/lightning-talk/index.qmd`

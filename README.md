@@ -95,7 +95,10 @@ reading many chunks inside an already-running loop.
 
 ## Documentation
 
+The docs site and slide deck both serve shared logo assets from repository-root SVG files exposed into `docs/` and `slides/lightning-talk/assets/` via symlinks.
+
 - [Home](https://developmentseed.github.io/lazycogs/) — quickstart and full usage guide
+- [Lightning talk slides](https://developmentseed.org/lazycogs/slides/lightning-talk/)
 - [Example: Midwest US daily Sentinel-2 array](https://developmentseed.org/lazycogs/notebooks/demo_midwest_daily/)
 - [Example: Southwest US monthly low-cloud Sentinel-2 array](https://developmentseed.org/lazycogs/notebooks/demo_southwest_monthly/)
 - [Architecture](https://developmentseed.org/lazycogs/architecture/)
