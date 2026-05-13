@@ -14,12 +14,7 @@ from numpy import ma
 
 from lazycogs._executor import _run_coroutine
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
-from lazycogs._reproject import (
-    WarpMap,
-    _get_transformer,
-    apply_warp_map,
-    compute_warp_map,
-)
+from lazycogs._reproject import ReprojectRequest, _get_transformer, reproject_tile
 from lazycogs._store import resolve as _resolve_store
 
 if TYPE_CHECKING:
@@ -48,7 +43,7 @@ class _ChunkContext:
     nodata: float | None
     store: ObjectStore | None
     path_fn: Callable[[str], str] | None
-    warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None
+    warp_cache: dict[object, object] | None
 
 
 def _log_batch_failure(
@@ -275,45 +270,32 @@ def _apply_bands_with_warp_cache(
     dst_crs: CRS,
     dst_width: int,
     dst_height: int,
-    warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None = None,
+    warp_cache: dict[object, object] | None = None,
 ) -> dict[str, tuple[np.ndarray, float | None]]:
-    """Apply warp maps to multiple band rasters, reusing maps for identical geometries.
+    """Reproject multiple band rasters through the backend-neutral interface.
 
-    Checks ``warp_cache`` (keyed on ``(tuple(raster.transform), src_crs.to_wkt())``)
-    before computing a new warp map.  When ``warp_cache`` is shared across calls
-    (e.g. across time steps in a single chunk read), warp maps for recurring tile
-    geometries are computed only once.  Bands with different geometries each get
-    their own correct warp map.
-
-    This function is designed to run inside a thread executor — it is CPU-bound
-    and must not be called from the async event loop directly.  When ``warp_cache``
-    is shared across concurrent executor calls, two threads may both compute the
-    same warp map before either stores it; this is safe because ``compute_warp_map``
-    is deterministic and the duplicate result is simply overwritten.
+    The optional ``warp_cache`` is currently forwarded to the legacy backend so
+    repeated source geometries can still reuse precomputed mappings during the
+    migration away from warp-map-specific call sites.
 
     Args:
         band_rasters: List of ``(band_name, raster, src_crs, effective_nodata)``
-            tuples.  ``raster`` must have ``.transform`` (Affine) and ``.data``
+            tuples. ``raster`` must have ``.transform`` (Affine) and ``.data``
             (ndarray of shape ``(bands, h, w)``) attributes.
         dst_transform: Affine transform of the destination grid.
         dst_crs: CRS of the destination grid.
         dst_width: Width of the destination grid in pixels.
         dst_height: Height of the destination grid in pixels.
-        warp_cache: Optional external cache shared across calls.  When ``None``
-            a fresh local dict is used (original per-item behaviour).
+        warp_cache: Optional migration-time cache shared across calls.
 
     Returns:
         ``dict`` mapping band name to ``(reprojected_array, effective_nodata)``.
 
     """
-    cache: dict[tuple[tuple[float, ...], CRS], WarpMap] = (
-        warp_cache if warp_cache is not None else {}
-    )
+    cache = warp_cache if warp_cache is not None else {}
     results: dict[str, tuple[np.ndarray, float | None]] = {}
 
     for band, raster, src_crs, effective_nodata in band_rasters:
-        # Fast path: skip reprojection when the read window already matches the
-        # destination chunk exactly (same CRS, same affine, same pixel dimensions).
         if (
             src_crs.equals(dst_crs)
             and raster.transform == dst_transform
@@ -322,18 +304,22 @@ def _apply_bands_with_warp_cache(
         ):
             results[band] = (raster.data, effective_nodata)
             continue
-        cache_key = (tuple(raster.transform), src_crs)
-        if cache_key not in cache:
-            cache[cache_key] = compute_warp_map(
-                src_transform=raster.transform,
-                src_crs=src_crs,
-                dst_transform=dst_transform,
-                dst_crs=dst_crs,
-                dst_width=dst_width,
-                dst_height=dst_height,
-            )
+
         results[band] = (
-            apply_warp_map(raster.data, cache[cache_key], effective_nodata),
+            reproject_tile(
+                ReprojectRequest(
+                    data=raster.data,
+                    src_transform=raster.transform,
+                    src_crs=src_crs,
+                    dst_transform=dst_transform,
+                    dst_crs=dst_crs,
+                    dst_width=dst_width,
+                    dst_height=dst_height,
+                    nodata=effective_nodata,
+                    resampling="nearest",
+                ),
+                warp_cache=cache,
+            ),
             effective_nodata,
         )
 

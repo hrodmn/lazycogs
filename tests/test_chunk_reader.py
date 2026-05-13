@@ -273,6 +273,25 @@ def _make_raster(transform: Affine, value: float, h: int = 4, w: int = 4) -> Mag
     return raster
 
 
+def test_apply_bands_with_warp_cache_same_grid_bypasses_reproject_tile():
+    """Same-grid reads return directly without invoking the reprojection backend."""
+    crs = CRS.from_epsg(4326)
+    transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+    raster = _make_raster(transform, 1.0)
+
+    with patch("lazycogs._chunk_reader.reproject_tile") as reproject_tile_mock:
+        results = _apply_bands_with_warp_cache(
+            [("B01", raster, crs, None)],
+            transform,
+            crs,
+            dst_width=4,
+            dst_height=4,
+        )
+
+    reproject_tile_mock.assert_not_called()
+    np.testing.assert_array_equal(results["B01"][0], raster.data)
+
+
 def test_apply_bands_with_warp_cache_shared_geometry():
     """Bands with the same transform/CRS share a single warp map computation."""
     crs = CRS.from_epsg(4326)
@@ -285,16 +304,15 @@ def test_apply_bands_with_warp_cache_shared_geometry():
     raster_b = _make_raster(transform, 2.0)
 
     warp_map_calls = []
+    from lazycogs._reproject import compute_warp_map as real_compute_warp_map
 
     def _spy_compute_warp_map(*args, **kwargs):
-        from lazycogs._reproject import compute_warp_map as _real
-
-        result = _real(*args, **kwargs)
+        result = real_compute_warp_map(*args, **kwargs)
         warp_map_calls.append(True)
         return result
 
     with patch(
-        "lazycogs._chunk_reader.compute_warp_map",
+        "lazycogs._reproject.compute_warp_map",
         side_effect=_spy_compute_warp_map,
     ):
         results = _apply_bands_with_warp_cache(
@@ -325,16 +343,15 @@ def test_apply_bands_with_warp_cache_different_geometry():
     raster_b = _make_raster(transform_b, 2.0, h=2, w=2)
 
     warp_map_calls = []
+    from lazycogs._reproject import compute_warp_map as real_compute_warp_map
 
     def _spy_compute_warp_map(*args, **kwargs):
-        from lazycogs._reproject import compute_warp_map as _real
-
-        result = _real(*args, **kwargs)
+        result = real_compute_warp_map(*args, **kwargs)
         warp_map_calls.append(True)
         return result
 
     with patch(
-        "lazycogs._chunk_reader.compute_warp_map",
+        "lazycogs._reproject.compute_warp_map",
         side_effect=_spy_compute_warp_map,
     ):
         results = _apply_bands_with_warp_cache(
@@ -361,16 +378,15 @@ def test_apply_bands_with_warp_cache_shared_across_calls():
     shared_cache: dict = {}
 
     warp_map_calls = []
+    from lazycogs._reproject import compute_warp_map as real_compute_warp_map
 
     def _spy_compute_warp_map(*args, **kwargs):
-        from lazycogs._reproject import compute_warp_map as _real
-
-        result = _real(*args, **kwargs)
+        result = real_compute_warp_map(*args, **kwargs)
         warp_map_calls.append(True)
         return result
 
     with patch(
-        "lazycogs._chunk_reader.compute_warp_map",
+        "lazycogs._reproject.compute_warp_map",
         side_effect=_spy_compute_warp_map,
     ):
         _apply_bands_with_warp_cache(

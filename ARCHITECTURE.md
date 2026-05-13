@@ -1,6 +1,6 @@
 # Architecture: lazycogs
 
-lazycogs turns a geoparquet STAC item index into a lazy `(band, time, y, x)` xarray DataArray backed by Cloud-Optimized GeoTIFFs. It requires no GDAL. All raster I/O is done through `async-geotiff` (Rust-backed), spatial queries go through DuckDB via `rustac`, and reprojection is pure `pyproj` + numpy.
+lazycogs turns a geoparquet STAC item index into a lazy `(band, time, y, x)` xarray DataArray backed by Cloud-Optimized GeoTIFFs. It requires no GDAL. All raster I/O is done through `async-geotiff` (Rust-backed), spatial queries go through DuckDB via `rustac`, and reprojection now flows through a backend-neutral dispatcher in `_reproject.py`. Today that dispatcher still defaults to the legacy `pyproj` + numpy nearest-neighbor engine while the rust-warp adapter is being integrated.
 
 ## Why parquet, not a STAC API URL
 
@@ -30,7 +30,7 @@ src/lazycogs/
   _executor.py       Per-chunk reprojection thread pool configuration. Exposes set_reproject_workers() and get_max_workers(); the actual pool is created per event loop in _backend.py.
   _explain.py        Dry-run read estimator. Registers the da.lazycogs.explain() xarray accessor.
   _grid.py           Compute output affine transform and dimensions from bbox + resolution.
-  _reproject.py      Nearest-neighbor reprojection using pyproj Transformer + numpy fancy indexing.
+  _reproject.py      Backend-neutral reprojection dispatcher; legacy nearest-neighbor backend still uses pyproj Transformer + numpy fancy indexing.
   _storage_ext.py    STAC Storage Extension metadata parsing (version detection, kwargs extraction for v1 and v2).
   _store.py          Resolve cloud HREFs into obstore Store instances (or route through a user-supplied store) with a thread-local cache; store_for() factory for constructing stores from parquet STAC files.
   _temporal.py       Temporal grouping strategies (day, week, month, year, fixed-day-count).
@@ -125,9 +125,11 @@ If the chunk bbox falls entirely outside the source image after clamping, `_nati
 
 `await reader.read(window=window)` fetches the windowed pixel data from the selected overview level (or full-res). The result is a `(bands, window_h, window_w)` array in the source CRS/grid.
 
-### 4. Nearest-neighbor reprojection
+### 4. Reprojection dispatch and current legacy backend
 
-`reproject_array()` in `_reproject.py` warps the source tile onto the destination chunk grid without GDAL:
+`_chunk_reader.py` now builds a `ReprojectRequest` and calls `reproject_tile()` in `_reproject.py` rather than reaching directly into warp-map helpers. That gives lazycogs a clean seam for swapping reprojection engines while keeping chunk orchestration unchanged.
+
+The dispatcher currently short-circuits exact same-grid reads and otherwise routes to the legacy nearest-neighbor backend, which still warps the source tile onto the destination chunk grid without GDAL:
 
 1. Build a meshgrid of destination pixel-centre coordinates.
 2. Transform all coordinates from `dst_crs` to `src_crs` in one vectorised `Transformer.transform()` call.
@@ -135,7 +137,7 @@ If the chunk bbox falls entirely outside the source image after clamping, `_nati
 4. `np.floor` rounds to the nearest-neighbor sample; numpy fancy indexing populates the output array.
 5. Out-of-bounds pixels get the nodata fill value.
 
-Nearest-neighbor is the only supported resampling method.
+Nearest-neighbor is still the only active resampling method in production code. The `rust-warp` dependency is present for development and adapter work, but it is not the default engine yet.
 
 ## Concurrency model
 
@@ -264,7 +266,8 @@ When the store root does not align with the URL structure of the asset HREFs —
 | `arro3-core` | Zero-copy Arrow table output from DuckDB queries (installed via `rustac[arrow]`) |
 | `async-geotiff` | Async COG header reads and windowed tile reads (Rust, no GDAL) |
 | `obstore` | Cloud object store abstraction layer for async-geotiff |
-| `pyproj` | CRS transforms: bbox reprojection, warp map generation |
+| `rust-warp` | Experimental reprojection backend dependency, currently sourced from GitHub during integration work |
+| `pyproj` | CRS transforms: bbox reprojection, target-resolution estimation, legacy warp backend |
 | `xarray` | DataArray / Dataset assembly, `BackendArray` / `LazilyIndexedArray` protocol |
 | `rasterix` | CRS-aware `RasterIndex` for lazy spatial coordinates |
 | `xproj` | CRS accessor and alignment for xarray Flexible Indexes |

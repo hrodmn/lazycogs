@@ -6,10 +6,12 @@ from affine import Affine
 from pyproj import CRS
 
 from lazycogs._reproject import (
+    ReprojectRequest,
     WarpMap,
     apply_warp_map,
     compute_warp_map,
     reproject_array,
+    reproject_tile,
 )
 
 
@@ -42,6 +44,58 @@ def test_output_shape(wgs84):
     data = np.ones((2, 2, 2), dtype=np.float32)
     out = reproject_array(data, src_transform, wgs84, dst_transform, wgs84, 1, 2)
     assert out.shape == (2, 2, 1)
+
+
+def test_reproject_tile_same_grid_returns_original_array(wgs84):
+    """The backend-neutral dispatcher short-circuits exact same-grid reads."""
+    transform = _make_transform(0.0, 3.0, 1.0)
+    data = np.arange(9, dtype=np.float32).reshape(1, 3, 3)
+
+    out = reproject_tile(
+        ReprojectRequest(
+            data=data,
+            src_transform=transform,
+            src_crs=wgs84,
+            dst_transform=transform,
+            dst_crs=wgs84,
+            dst_width=3,
+            dst_height=3,
+        ),
+    )
+
+    assert out is data
+
+
+def test_reproject_tile_matches_legacy_wrapper(wgs84):
+    """The backend-neutral path preserves current nearest-neighbor behavior."""
+    src_transform = _make_transform(0.0, 2.0, 1.0)
+    dst_transform = _make_transform(0.0, 4.0, 2.0)
+    data = np.ones((2, 2, 2), dtype=np.float32)
+
+    request = ReprojectRequest(
+        data=data,
+        src_transform=src_transform,
+        src_crs=wgs84,
+        dst_transform=dst_transform,
+        dst_crs=wgs84,
+        dst_width=1,
+        dst_height=2,
+        nodata=-9999.0,
+    )
+
+    np.testing.assert_array_equal(
+        reproject_tile(request),
+        reproject_array(
+            data,
+            src_transform,
+            wgs84,
+            dst_transform,
+            wgs84,
+            1,
+            2,
+            nodata=-9999.0,
+        ),
+    )
 
 
 def test_out_of_bounds_pixels_get_nodata(wgs84):

@@ -1,10 +1,10 @@
-"""Reproject raster arrays using pyproj and numpy nearest-neighbor sampling."""
+"""Reproject raster arrays using a backend-neutral request interface."""
 
 from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from pyproj import CRS, Transformer
@@ -32,6 +32,35 @@ def _get_transformer(src_crs: CRS, dst_crs: CRS) -> Transformer:
 
     """
     return Transformer.from_crs(src_crs, dst_crs, always_xy=True)
+
+
+@dataclass(frozen=True)
+class ReprojectRequest:
+    """All inputs required to reproject one source tile.
+
+    Attributes:
+        data: Source data with shape ``(bands, src_h, src_w)``.
+        src_transform: Affine transform of the source array.
+        src_crs: CRS of the source array.
+        dst_transform: Affine transform of the destination grid.
+        dst_crs: CRS of the destination grid.
+        dst_width: Destination width in pixels.
+        dst_height: Destination height in pixels.
+        nodata: Fill value for pixels that fall outside the source extent.
+        resampling: Requested resampling method. Only ``"nearest"`` is
+            supported by the legacy backend.
+
+    """
+
+    data: np.ndarray
+    src_transform: Affine
+    src_crs: CRS
+    dst_transform: Affine
+    dst_crs: CRS
+    dst_width: int
+    dst_height: int
+    nodata: float | None = None
+    resampling: str = "nearest"
 
 
 @dataclass
@@ -145,6 +174,84 @@ def apply_warp_map(
     return out
 
 
+def _same_grid(request: ReprojectRequest) -> bool:
+    """Return ``True`` when reprojection is an exact no-op."""
+    return (
+        request.src_crs.equals(request.dst_crs)
+        and request.src_transform == request.dst_transform
+        and request.data.shape[1] == request.dst_height
+        and request.data.shape[2] == request.dst_width
+    )
+
+
+def _legacy_cache_key(request: ReprojectRequest) -> tuple[tuple[float, ...], CRS]:
+    """Return the cache key for the legacy nearest-neighbor backend."""
+    return (tuple(request.src_transform), request.src_crs)
+
+
+def _reproject_tile_legacy(
+    request: ReprojectRequest,
+    warp_map: WarpMap | None = None,
+) -> np.ndarray:
+    """Reproject a tile with the legacy pyproj/numpy nearest backend."""
+    if request.resampling != "nearest":
+        raise ValueError(
+            "The legacy reprojection backend only supports resampling='nearest'.",
+        )
+
+    resolved_warp_map = warp_map or compute_warp_map(
+        request.src_transform,
+        request.src_crs,
+        request.dst_transform,
+        request.dst_crs,
+        request.dst_width,
+        request.dst_height,
+    )
+    return apply_warp_map(request.data, resolved_warp_map, request.nodata)
+
+
+def reproject_tile(
+    request: ReprojectRequest,
+    *,
+    backend: Literal["legacy"] = "legacy",
+    warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None = None,
+) -> np.ndarray:
+    """Reproject one ``(bands, y, x)`` source tile onto a destination grid.
+
+    Args:
+        request: Reprojection inputs for one tile.
+        backend: Internal backend selector. Only ``"legacy"`` is currently
+            implemented.
+        warp_cache: Optional cache for the legacy backend's precomputed warp
+            maps, keyed by source transform and CRS.
+
+    Returns:
+        Reprojected array with shape ``(bands, dst_height, dst_width)``.
+
+    """
+    if _same_grid(request):
+        return request.data
+    if backend != "legacy":
+        raise ValueError(f"Unsupported reprojection backend: {backend}")
+
+    warp_map: WarpMap | None = None
+    if warp_cache is not None:
+        cache_key = _legacy_cache_key(request)
+        warp_map = warp_cache.get(cache_key)
+        if warp_map is None:
+            warp_map = compute_warp_map(
+                request.src_transform,
+                request.src_crs,
+                request.dst_transform,
+                request.dst_crs,
+                request.dst_width,
+                request.dst_height,
+            )
+            warp_cache[cache_key] = warp_map
+
+    return _reproject_tile_legacy(request, warp_map)
+
+
 def reproject_array(
     data: np.ndarray,
     src_transform: Affine,
@@ -157,10 +264,9 @@ def reproject_array(
 ) -> np.ndarray:
     """Reproject a raster array using nearest-neighbor sampling.
 
-    Convenience wrapper around :func:`compute_warp_map` and
-    :func:`apply_warp_map`.  Use those functions directly when the same source
-    CRS and window transform are shared across multiple bands, so the warp map
-    can be computed once and reused.
+    Convenience wrapper around :class:`ReprojectRequest` and
+    :func:`reproject_tile`.  Use :func:`reproject_tile` directly for the new
+    backend-neutral path.
 
     Args:
         data: Source data with shape ``(bands, src_h, src_w)``.
@@ -178,12 +284,15 @@ def reproject_array(
         the same dtype as ``data``.
 
     """
-    warp_map = compute_warp_map(
-        src_transform,
-        src_crs,
-        dst_transform,
-        dst_crs,
-        dst_width,
-        dst_height,
+    return reproject_tile(
+        ReprojectRequest(
+            data=data,
+            src_transform=src_transform,
+            src_crs=src_crs,
+            dst_transform=dst_transform,
+            dst_crs=dst_crs,
+            dst_width=dst_width,
+            dst_height=dst_height,
+            nodata=nodata,
+        ),
     )
-    return apply_warp_map(data, warp_map, nodata)

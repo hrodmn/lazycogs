@@ -84,6 +84,13 @@ def test_open_accepts_parquet_extension_passes_validation(tmp_path):
     assert "must be a .parquet" not in str(exc_info.value)
 
 
+def test_rust_warp_dependency_available():
+    """The configured rust-warp dependency is importable in the test environment."""
+    import rust_warp
+
+    assert callable(rust_warp.reproject_array)
+
+
 # ---------------------------------------------------------------------------
 # _build_time_steps
 # ---------------------------------------------------------------------------
