@@ -251,6 +251,36 @@ def _build_time_steps(
     return filter_strings, time_coords
 
 
+def _spatial_coords_with_eager_variables(index: RasterIndex) -> Coordinates:
+    """Return RasterIndex-backed spatial coordinates with eager x/y variables.
+
+    ``Coordinates.from_xindex(index)`` keeps the x/y coordinate variables backed
+    by ``CoordinateTransformIndexingAdapter``. That works for normal access, but
+    after ``DataArray.chunk(...).sel(x=..., y=..., method="nearest")`` xarray can
+    end up computing scalar x/y coordinates as length-1 arrays, which then fail
+    shape validation during ``compute()``.
+
+    This helper keeps the ``RasterIndex`` itself for spatial selection semantics
+    while materialising the x/y coordinate variables as plain NumPy arrays so
+    scalar coordinate loads stay scalar after chunking.
+
+    Args:
+        index: Raster index describing the output grid.
+
+    Returns:
+        Coordinates containing eager x/y variables and the original RasterIndex.
+
+    """
+    index_variables = index.create_variables()
+    return Coordinates(
+        {
+            name: (variable.dims, np.asarray(variable.data), variable.attrs)
+            for name, variable in index_variables.items()
+        },
+        indexes=dict.fromkeys(index_variables, index),
+    )
+
+
 def _build_dataarray(
     *,
     parquet_path: str,
@@ -356,7 +386,7 @@ def _build_dataarray(
         y_dim="y",
         crs=dst_crs,
     )
-    spatial_coords = Coordinates.from_xindex(index)
+    spatial_coords = _spatial_coords_with_eager_variables(index)
 
     time_coord = np.array(time_coords, dtype="datetime64[D]")
 
