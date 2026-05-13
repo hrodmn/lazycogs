@@ -411,6 +411,33 @@ def test_apply_bands_with_warp_cache_shared_across_calls():
     assert len(shared_cache) == 1
 
 
+def test_apply_bands_with_warp_cache_uses_rust_backend_when_selected():
+    """The chunk-reader seam can dispatch to rust-warp without caller changes."""
+    crs = CRS.from_epsg(4326)
+    src_transform = Affine(1.0, 0.0, 0.5, 0.0, -1.0, 4.0)
+    dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+    raster = _make_raster(src_transform, 1.0)
+    expected = np.full((1, 4, 4), 7.0, dtype=np.float32)
+
+    with (
+        patch("lazycogs._reproject._DEFAULT_REPROJECT_BACKEND", "rust-warp"),
+        patch(
+            "lazycogs._reproject.reproject_array_rust_warp",
+            return_value=expected,
+        ) as rust_backend_mock,
+    ):
+        results = _apply_bands_with_warp_cache(
+            [("B01", raster, crs, None)],
+            dst_transform,
+            crs,
+            dst_width=4,
+            dst_height=4,
+        )
+
+    rust_backend_mock.assert_called_once()
+    np.testing.assert_array_equal(results["B01"][0], expected)
+
+
 # ---------------------------------------------------------------------------
 # read_chunk_async (multi-band)
 # ---------------------------------------------------------------------------

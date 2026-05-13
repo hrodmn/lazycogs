@@ -13,6 +13,7 @@ from lazycogs._reproject import (
     reproject_array,
     reproject_tile,
 )
+from lazycogs._rust_warp import _affine_to_rust_warp, _normalize_crs
 
 
 @pytest.fixture
@@ -96,6 +97,112 @@ def test_reproject_tile_matches_legacy_wrapper(wgs84):
             nodata=-9999.0,
         ),
     )
+
+
+def test_affine_to_rust_warp_uses_six_value_rasterio_order():
+    """Affine conversion emits the 6-tuple rust-warp expects."""
+    transform = Affine(2.0, 0.5, 10.0, -0.25, -3.0, 20.0)
+
+    assert _affine_to_rust_warp(transform) == (2.0, 0.5, 10.0, -0.25, -3.0, 20.0)
+
+
+def test_normalize_crs_prefers_epsg_strings(wgs84):
+    """EPSG-backed CRSes normalize to ``EPSG:<code>`` strings."""
+    assert _normalize_crs(wgs84) == "EPSG:4326"
+
+
+def test_normalize_crs_falls_back_to_proj_string():
+    """Non-EPSG CRSes fall back to a usable PROJ string."""
+    custom_crs = CRS.from_proj4(
+        "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 "
+        "+x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs",
+    )
+
+    normalized = _normalize_crs(custom_crs)
+
+    assert normalized.startswith("+proj=aea")
+    assert "+lat_1=29.5" in normalized
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [np.float32, np.float64, np.int8, np.uint8, np.uint16, np.int16],
+)
+def test_reproject_tile_rust_warp_supports_expected_dtypes(wgs84, dtype):
+    """Supported dtypes pass through the rust-warp backend unchanged."""
+    src_transform = _make_transform(0.0, 2.0, 1.0)
+    dst_transform = _make_transform(0.0, 2.0, 0.5)
+    data = np.arange(4, dtype=dtype).reshape(1, 2, 2)
+
+    out = reproject_tile(
+        ReprojectRequest(
+            data=data,
+            src_transform=src_transform,
+            src_crs=wgs84,
+            dst_transform=dst_transform,
+            dst_crs=wgs84,
+            dst_width=4,
+            dst_height=4,
+            nodata=-1.0,
+        ),
+        backend="rust-warp",
+    )
+
+    assert out.shape == (1, 4, 4)
+    assert out.dtype == data.dtype
+
+
+def test_reproject_tile_rust_warp_rejects_unsupported_dtype(wgs84):
+    """Unsupported dtypes fail deterministically before async chunk execution."""
+    src_transform = _make_transform(0.0, 2.0, 1.0)
+    dst_transform = _make_transform(0.0, 2.0, 0.5)
+    data = np.arange(4, dtype=np.int32).reshape(1, 2, 2)
+
+    with pytest.raises(TypeError, match="does not support dtype"):
+        reproject_tile(
+            ReprojectRequest(
+                data=data,
+                src_transform=src_transform,
+                src_crs=wgs84,
+                dst_transform=dst_transform,
+                dst_crs=wgs84,
+                dst_width=4,
+                dst_height=4,
+            ),
+            backend="rust-warp",
+        )
+
+
+def test_reproject_tile_rust_warp_preserves_band_order(wgs84):
+    """Band-plane iteration keeps shape and band ordering intact."""
+    src_transform = _make_transform(0.0, 2.0, 1.0)
+    dst_transform = _make_transform(0.0, 2.0, 0.5)
+    data = np.stack(
+        [
+            np.full((2, 2), 10.0, dtype=np.float32),
+            np.full((2, 2), 20.0, dtype=np.float32),
+            np.full((2, 2), 30.0, dtype=np.float32),
+        ],
+    )
+
+    out = reproject_tile(
+        ReprojectRequest(
+            data=data,
+            src_transform=src_transform,
+            src_crs=wgs84,
+            dst_transform=dst_transform,
+            dst_crs=wgs84,
+            dst_width=4,
+            dst_height=4,
+            nodata=-9999.0,
+        ),
+        backend="rust-warp",
+    )
+
+    assert out.shape == (3, 4, 4)
+    np.testing.assert_array_equal(out[0], 10.0)
+    np.testing.assert_array_equal(out[1], 20.0)
+    np.testing.assert_array_equal(out[2], 30.0)
 
 
 def test_out_of_bounds_pixels_get_nodata(wgs84):

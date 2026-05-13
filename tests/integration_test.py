@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import contextlib
 import hashlib
@@ -10,9 +11,11 @@ import rustac
 from pyproj import Transformer
 
 import lazycogs
+from lazycogs import _reproject
 
 logging.basicConfig(level="WARN")
 logging.getLogger("lazycogs").setLevel("DEBUG")
+logger = logging.getLogger(__name__)
 
 
 def _parquet_path(
@@ -68,16 +71,40 @@ def measure(label: str):
     yield
     elapsed = time.perf_counter() - t0
     rss_after = _rss_mb()
-    print(
-        f"[{label}] "
-        f"time={elapsed:.2f}s  "
-        f"rss_before={rss_before:.0f}MB  "
-        f"rss_after={rss_after:.0f}MB  "
-        f"delta={rss_after - rss_before:+.0f}MB",
+    logger.warning(
+        "[%s] time=%.2fs rss_before=%.0fMB rss_after=%.0fMB delta=%+.0fMB",
+        label,
+        elapsed,
+        rss_before,
+        rss_after,
+        rss_after - rss_before,
     )
 
 
-async def run():
+@contextlib.contextmanager
+def _reproject_backend(backend: str):
+    """Temporarily force the internal reprojection backend for this script."""
+    previous_backend = _reproject._DEFAULT_REPROJECT_BACKEND
+    _reproject._DEFAULT_REPROJECT_BACKEND = backend
+    try:
+        yield
+    finally:
+        _reproject._DEFAULT_REPROJECT_BACKEND = previous_backend
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse command-line options for the integration script."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reproject-backend",
+        choices=["legacy", "rust-warp"],
+        default="legacy",
+        help="Internal reprojection backend to exercise during the run.",
+    )
+    return parser.parse_args()
+
+
+async def run(reproject_backend: str):
     dst_crs = "epsg:5070"
     dst_bbox = (-700_000, 2_220_000, 600_000, 2_930_000)
 
@@ -96,7 +123,7 @@ async def run():
         bbox=bbox_4326,
         limit=limit,
     )
-    print(f"cache: {items_parquet}")
+    logger.warning("cache: %s", items_parquet)
 
     if not items_parquet.exists():
         await rustac.search_to(
@@ -109,29 +136,32 @@ async def run():
         )
 
     # --- daily time steps ---
-    store = lazycogs.store_for(str(items_parquet), skip_signature=True)
-    da = lazycogs.open(
-        str(items_parquet),
-        crs=dst_crs,
-        bbox=dst_bbox,
-        resolution=100,
-        time_period="P1D",
-        bands=["red", "green", "blue"],
-        dtype="int16",
-        store=store,
-    )
-    print(f"\ndaily array: {da}")
+    with _reproject_backend(reproject_backend):
+        logger.warning("using reprojection backend: %s", reproject_backend)
+        store = lazycogs.store_for(str(items_parquet), skip_signature=True)
+        da = lazycogs.open(
+            str(items_parquet),
+            crs=dst_crs,
+            bbox=dst_bbox,
+            resolution=100,
+            time_period="P1D",
+            bands=["red", "green", "blue"],
+            dtype="int16",
+            store=store,
+        )
+        logger.warning("daily array: %s", da)
 
-    with measure("daily point (chunked)"):
-        _ = da.chunk(time=1).sel(x=299965, y=2653947, method="nearest").compute()
+        with measure("daily point"):
+            _ = da.sel(x=299965, y=2653947, method="nearest").compute()
 
-    subset = da.sel(
-        x=slice(100_000, 400_000),
-        y=slice(2_800_000, 2_600_000),
-    )
-    with measure("daily spatial subset isel(time=1)"):
-        _ = subset.isel(time=1).load()
+        subset = da.sel(
+            x=slice(100_000, 400_000),
+            y=slice(2_800_000, 2_600_000),
+        )
+        with measure("daily spatial subset isel(time=1)"):
+            _ = subset.isel(time=1).load()
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    args = _parse_args()
+    asyncio.run(run(args.reproject_backend))

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from pyproj import CRS, Transformer
 
+from lazycogs._rust_warp import reproject_array_rust_warp
+
 if TYPE_CHECKING:
     from affine import Affine
 
@@ -210,20 +212,23 @@ def _reproject_tile_legacy(
     return apply_warp_map(request.data, resolved_warp_map, request.nodata)
 
 
+_DEFAULT_REPROJECT_BACKEND: Literal["legacy", "rust-warp"] = "legacy"
+
+
 def reproject_tile(
     request: ReprojectRequest,
     *,
-    backend: Literal["legacy"] = "legacy",
+    backend: Literal["legacy", "rust-warp"] | None = None,
     warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None = None,
 ) -> np.ndarray:
     """Reproject one ``(bands, y, x)`` source tile onto a destination grid.
 
     Args:
         request: Reprojection inputs for one tile.
-        backend: Internal backend selector. Only ``"legacy"`` is currently
-            implemented.
+        backend: Internal backend selector. When ``None``, the module's
+            current default backend is used.
         warp_cache: Optional cache for the legacy backend's precomputed warp
-            maps, keyed by source transform and CRS.
+            maps, keyed by source transform and CRS. Ignored by rust-warp.
 
     Returns:
         Reprojected array with shape ``(bands, dst_height, dst_width)``.
@@ -231,8 +236,22 @@ def reproject_tile(
     """
     if _same_grid(request):
         return request.data
-    if backend != "legacy":
-        raise ValueError(f"Unsupported reprojection backend: {backend}")
+
+    resolved_backend = _DEFAULT_REPROJECT_BACKEND if backend is None else backend
+    if resolved_backend == "rust-warp":
+        return reproject_array_rust_warp(
+            data=request.data,
+            src_transform=request.src_transform,
+            src_crs=request.src_crs,
+            dst_transform=request.dst_transform,
+            dst_crs=request.dst_crs,
+            dst_width=request.dst_width,
+            dst_height=request.dst_height,
+            nodata=request.nodata,
+            resampling=request.resampling,
+        )
+    if resolved_backend != "legacy":
+        raise ValueError(f"Unsupported reprojection backend: {resolved_backend}")
 
     warp_map: WarpMap | None = None
     if warp_cache is not None:
