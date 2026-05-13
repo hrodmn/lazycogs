@@ -15,6 +15,11 @@ wheels/
 # mkdocs build output
 site/
 
+# Quarto / Reveal.js build output
+.quarto/
+slides/lightning-talk/index.html
+slides/lightning-talk/index_files/
+
 # benchmark data and results
 .benchmark_data/
 .benchmarks/

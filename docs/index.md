@@ -1,4 +1,4 @@
-![lazycogs](./lazycogs.svg)
+![lazycogs](./logo-text.svg)
 
 Open a lazy `(band, time, y, x)` xarray DataArray from thousands of cloud-optimized GeoTIFFs. No GDAL required.
 
