@@ -8,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import rustac
+from obstore.store import MemoryStore
 from rustac import DuckdbClient
 
 import lazycogs
@@ -283,17 +284,9 @@ def test_open_works_inside_running_event_loop(tmp_path):
     assert "error" not in result, f"Got RuntimeError: {result.get('error')}"
 
 
-def test_open_sets_expected_dataarray_attributes(tmp_path):
-    """open() attaches all expected extra attributes to the returned DataArray."""
-    from obstore.store import MemoryStore
-
-    parquet = tmp_path / "items.parquet"
-    parquet.write_bytes(b"")
-
-    store = MemoryStore()
-    store.put("B04.tif", b"dummy")
-
-    item = {
+def _fake_open_item() -> dict:
+    """Return a minimal STAC item used by open() tests."""
+    return {
         "id": "test-item",
         "stac_extensions": [],
         "properties": {"datetime": "2023-01-15T10:00:00Z"},
@@ -306,13 +299,24 @@ def test_open_sets_expected_dataarray_attributes(tmp_path):
         },
     }
 
+
+@pytest.fixture
+def opened_dataarray(tmp_path):
+    """Return a small DataArray from open() with DuckDB calls patched."""
+
+    parquet = tmp_path / "items.parquet"
+    parquet.write_bytes(b"")
+
+    store = MemoryStore()
+    store.put("B04.tif", b"dummy")
+
     table = _items_to_arrow([{"properties": {"datetime": "2023-01-15T10:00:00Z"}}])
 
     with (
-        patch("rustac.DuckdbClient.search", return_value=[item]),
+        patch("rustac.DuckdbClient.search", return_value=[_fake_open_item()]),
         patch("rustac.DuckdbClient.search_to_arrow", return_value=table),
     ):
-        da = lazycogs.open(
+        return lazycogs.open(
             str(parquet),
             bbox=(0.0, 0.0, 100.0, 100.0),
             crs="EPSG:32632",
@@ -320,6 +324,11 @@ def test_open_sets_expected_dataarray_attributes(tmp_path):
             store=store,
             path_from_href=lambda href: href.split("/", 3)[-1],
         )
+
+
+def test_open_sets_expected_dataarray_attributes(opened_dataarray):
+    """open() attaches all expected extra attributes to the returned DataArray."""
+    da = opened_dataarray
 
     # Coordinates
     assert da.coords["band"].values.tolist() == ["B04"]
@@ -353,6 +362,32 @@ def test_open_sets_expected_dataarray_attributes(tmp_path):
     assert da.attrs["_stac_time_coords"].dtype == np.dtype("datetime64[D]")
 
 
+def test_chunked_spatial_selection_computes_scalar_spatial_coords(opened_dataarray):
+    """Chunked nearest-neighbour spatial selection keeps x/y coords scalar."""
+    da = opened_dataarray
+
+    selected = da.chunk(time=1).sel(x=25.0, y=75.0, method="nearest")
+
+    x_coord = selected.coords["x"].compute()
+    y_coord = selected.coords["y"].compute()
+
+    assert x_coord.dims == ()
+    assert y_coord.dims == ()
+    assert x_coord.shape == ()
+    assert y_coord.shape == ()
+
+
+def test_chunked_spatial_selection_full_compute_succeeds(opened_dataarray):
+    """Chunked nearest-neighbour spatial selection can compute end-to-end."""
+    selected = opened_dataarray.chunk(time=1).sel(x=25.0, y=75.0, method="nearest")
+
+    with patch("rustac.DuckdbClient.search", return_value=[]):
+        computed = selected.compute()
+
+    assert computed.dims == ("band", "time")
+    assert computed.shape == (1, 1)
+
+
 # ---------------------------------------------------------------------------
 # _smoketest_store
 # ---------------------------------------------------------------------------
@@ -373,7 +408,6 @@ _SMOKETEST_ITEM = {
 
 def test_smoketest_passes_when_head_succeeds():
     """_smoketest_store does not raise when head() succeeds."""
-    from obstore.store import MemoryStore
 
     store = MemoryStore()
     store.put("B04.tif", b"dummy")
@@ -389,7 +423,6 @@ def test_smoketest_passes_when_head_succeeds():
 
 def test_smoketest_raises_runtime_error_on_head_failure():
     """_smoketest_store raises RuntimeError when the store cannot access the asset."""
-    from obstore.store import MemoryStore
 
     store = MemoryStore()  # empty — head() will raise
 
@@ -413,7 +446,6 @@ def test_smoketest_no_op_when_no_items():
 
 def test_smoketest_prefers_specified_band():
     """_smoketest_store uses the first specified band when bands= is given."""
-    from obstore.store import MemoryStore
 
     store = MemoryStore()
     store.put("B08.tif", b"dummy")
