@@ -238,6 +238,29 @@ def test_multiband_raw_getitem_calls_multiband_mosaic(wgs84):
     assert result.shape == (2, 1, 4)
 
 
+def test_multiband_raw_getitem_forwards_resampling(wgs84):
+    """The selected resampling mode reaches read_chunk_async unchanged."""
+    bands = ["B01", "B02"]
+    multi = _make_multiband_array(wgs84, bands)
+    multi.resampling = "cubic"
+    fake_items = [
+        {"id": "item-1", "assets": {b: {"href": f"s3://b/{b}.tif"} for b in bands}},
+    ]
+    fake_chunk = {b: np.zeros((1, 1, 4), dtype=np.float32) for b in bands}
+
+    with (
+        patch("rustac.DuckdbClient.search", return_value=fake_items),
+        patch(
+            "lazycogs._backend.read_chunk_async",
+            new_callable=AsyncMock,
+            return_value=fake_chunk,
+        ) as read_chunk_async_mock,
+    ):
+        multi._sync_getitem((slice(0, 2), 0, slice(0, 1), slice(0, 4)))
+
+    assert read_chunk_async_mock.await_args.kwargs["resampling"] == "cubic"
+
+
 def test_multiband_raw_getitem_squeeze_band(wgs84):
     """Integer band index squeezes the band dimension."""
     multi = _make_multiband_array(wgs84, ["B01", "B02"])

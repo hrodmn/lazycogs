@@ -1,5 +1,7 @@
 """Tests for _reproject: reproject_array, compute_warp_map, apply_warp_map."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 from affine import Affine
@@ -7,6 +9,7 @@ from pyproj import CRS
 
 from lazycogs._reproject import (
     ReprojectRequest,
+    ResamplingMethod,
     WarpMap,
     apply_warp_map,
     compute_warp_map,
@@ -97,6 +100,38 @@ def test_reproject_tile_matches_legacy_wrapper(wgs84):
             nodata=-9999.0,
         ),
     )
+
+
+def test_reproject_tile_defaults_to_rust_warp_backend(wgs84):
+    """The default backend selection now routes nearest through rust-warp."""
+    src_transform = _make_transform(0.0, 2.0, 1.0)
+    dst_transform = _make_transform(0.0, 2.0, 0.5)
+    data = np.arange(4, dtype=np.float32).reshape(1, 2, 2)
+    calls: list[ResamplingMethod] = []
+
+    def _fake_rust_warp(**kwargs):
+        calls.append(kwargs["resampling"])
+        return np.zeros((1, 4, 4), dtype=np.float32)
+
+    with patch(
+        "lazycogs._reproject.reproject_array_rust_warp",
+        side_effect=_fake_rust_warp,
+    ):
+        out = reproject_tile(
+            ReprojectRequest(
+                data=data,
+                src_transform=src_transform,
+                src_crs=wgs84,
+                dst_transform=dst_transform,
+                dst_crs=wgs84,
+                dst_width=4,
+                dst_height=4,
+                resampling=ResamplingMethod.NEAREST,
+            ),
+        )
+
+    assert calls == [ResamplingMethod.NEAREST]
+    assert out.shape == (1, 4, 4)
 
 
 def test_affine_to_rust_warp_uses_six_value_rasterio_order():

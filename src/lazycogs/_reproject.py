@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -13,6 +14,14 @@ from lazycogs._rust_warp import reproject_array_rust_warp
 
 if TYPE_CHECKING:
     from affine import Affine
+
+
+class ResamplingMethod(StrEnum):
+    """Supported public reprojection resampling methods."""
+
+    NEAREST = "nearest"
+    BILINEAR = "bilinear"
+    CUBIC = "cubic"
 
 
 @functools.lru_cache(maxsize=256)
@@ -49,8 +58,7 @@ class ReprojectRequest:
         dst_width: Destination width in pixels.
         dst_height: Destination height in pixels.
         nodata: Fill value for pixels that fall outside the source extent.
-        resampling: Requested resampling method. Only ``"nearest"`` is
-            supported by the legacy backend.
+        resampling: Requested resampling method.
 
     """
 
@@ -62,7 +70,7 @@ class ReprojectRequest:
     dst_width: int
     dst_height: int
     nodata: float | None = None
-    resampling: str = "nearest"
+    resampling: ResamplingMethod = ResamplingMethod.NEAREST
 
 
 @dataclass
@@ -212,7 +220,7 @@ def _reproject_tile_legacy(
     return apply_warp_map(request.data, resolved_warp_map, request.nodata)
 
 
-_DEFAULT_REPROJECT_BACKEND: Literal["legacy", "rust-warp"] = "legacy"
+_DEFAULT_REPROJECT_BACKEND: Literal["legacy", "rust-warp"] = "rust-warp"
 
 
 def reproject_tile(

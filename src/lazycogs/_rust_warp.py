@@ -67,10 +67,16 @@ def _validate_supported_dtype(data: np.ndarray) -> np.dtype:
     return dtype
 
 
-def _normalize_nodata(nodata: float | None, dtype: np.dtype) -> float | int | None:
-    """Cast ``nodata`` to the source dtype so fill semantics match numpy's."""
+def _normalize_nodata(nodata: float | None, dtype: np.dtype) -> float | int:
+    """Cast ``nodata`` to the source dtype, defaulting to lazycogs' zero fill.
+
+    rust-warp uses ``NaN`` as the implicit fill for floating-point arrays when
+    ``nodata`` is omitted. lazycogs has historically treated ``nodata=None`` as
+    a request for zero fill regardless of dtype, so normalize that explicitly
+    before dispatch.
+    """
     if nodata is None:
-        return None
+        return np.array([0]).astype(dtype, casting="unsafe")[0].item()
     return np.array([nodata]).astype(dtype, casting="unsafe")[0].item()
 
 

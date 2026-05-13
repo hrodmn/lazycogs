@@ -17,6 +17,7 @@ from lazycogs._backend import MultiBandStacBackendArray
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
 from lazycogs._grid import compute_output_grid
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
+from lazycogs._reproject import ResamplingMethod
 from lazycogs._store import resolve
 from lazycogs._temporal import _TemporalGrouper, grouper_from_period
 
@@ -27,6 +28,9 @@ if TYPE_CHECKING:
     from obstore.store import ObjectStore
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_RESAMPLING = ResamplingMethod.NEAREST
+SUPPORTED_RESAMPLING = tuple(ResamplingMethod)
 
 
 class _CompactDateArray(np.ndarray):
@@ -251,6 +255,28 @@ def _build_time_steps(
     return filter_strings, time_coords
 
 
+def _validate_resampling(resampling: str | ResamplingMethod) -> ResamplingMethod:
+    """Return ``resampling`` as a supported enum, else raise ``ValueError``.
+
+    Args:
+        resampling: User-provided resampling method name.
+
+    Returns:
+        Normalized resampling enum value.
+
+    Raises:
+        ValueError: If *resampling* is not currently supported.
+
+    """
+    try:
+        return ResamplingMethod(resampling)
+    except ValueError as exc:
+        supported = ", ".join(SUPPORTED_RESAMPLING)
+        raise ValueError(
+            f"Unsupported resampling {resampling!r}. Supported values: {supported}.",
+        ) from exc
+
+
 def _build_dataarray(
     *,
     parquet_path: str,
@@ -269,6 +295,7 @@ def _build_dataarray(
     out_dtype: np.dtype,
     method_cls: type[MosaicMethodBase],
     chunks: dict[str, int] | None,
+    resampling: ResamplingMethod,
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
     path_from_href: Callable[[str], str] | None = None,
@@ -299,6 +326,7 @@ def _build_dataarray(
         out_dtype: Output array dtype.
         method_cls: Mosaic method class.
         chunks: Passed to ``DataArray.chunk()`` if not ``None``.
+        resampling: Reprojection resampling method for chunk reads.
         store: Pre-configured obstore ``ObjectStore`` instance.  When
             provided, it is used directly for all asset reads instead of
             resolving a store from each HREF.
@@ -333,6 +361,7 @@ def _build_dataarray(
         dtype=out_dtype,
         nodata=nodata,
         mosaic_method_cls=method_cls,
+        resampling=resampling,
         store=store,
         max_concurrent_reads=max_concurrent_reads,
         path_from_href=path_from_href,
@@ -439,6 +468,7 @@ def open(  # noqa: A001
     nodata: float | None = None,
     dtype: str | np.dtype | None = None,
     mosaic_method: type[MosaicMethodBase] | None = None,
+    resampling: str | ResamplingMethod = DEFAULT_RESAMPLING,
     time_period: str = "P1D",
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
@@ -476,6 +506,10 @@ def open(  # noqa: A001
         dtype: Output array dtype.  Defaults to ``float32``.
         mosaic_method: Mosaic method class (not instance) to use.  Defaults
             to :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        resampling: Reprojection resampling method. Supported values are
+            ``"nearest"`` (default), ``"bilinear"``, and ``"cubic"``.
+            Validation happens at open time so unsupported values fail before
+            any chunk reads begin.
         time_period: ISO 8601 duration string controlling how items are
             grouped into time steps.  Supported forms: ``PnD`` (days),
             ``P1W`` (ISO calendar week), ``P1M`` (calendar month), ``P1Y``
@@ -558,8 +592,9 @@ def open(  # noqa: A001
                 "To query a hive-partitioned directory, pass a duckdb_client.",
             )
 
-    # Validate time_period early before any I/O so bad values fail fast.
+    # Validate user-facing options early before any I/O so bad values fail fast.
     grouper = grouper_from_period(time_period)
+    resolved_resampling = _validate_resampling(resampling)
 
     dst_crs = CRS.from_user_input(crs)
 
@@ -654,6 +689,7 @@ def open(  # noqa: A001
         out_dtype=out_dtype,
         method_cls=method_cls,
         chunks=chunks,
+        resampling=resolved_resampling,
         store=store,
         max_concurrent_reads=max_concurrent_reads,
         path_from_href=path_from_href,

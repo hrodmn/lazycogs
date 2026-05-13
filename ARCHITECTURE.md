@@ -1,6 +1,6 @@
 # Architecture: lazycogs
 
-lazycogs turns a geoparquet STAC item index into a lazy `(band, time, y, x)` xarray DataArray backed by Cloud-Optimized GeoTIFFs. It requires no GDAL. All raster I/O is done through `async-geotiff` (Rust-backed), spatial queries go through DuckDB via `rustac`, and reprojection now flows through a backend-neutral dispatcher in `_reproject.py`. Today that dispatcher still defaults to the legacy `pyproj` + numpy nearest-neighbor engine while the rust-warp adapter is being integrated.
+lazycogs turns a geoparquet STAC item index into a lazy `(band, time, y, x)` xarray DataArray backed by Cloud-Optimized GeoTIFFs. It requires no GDAL. All raster I/O is done through `async-geotiff` (Rust-backed), spatial queries go through DuckDB via `rustac`, and reprojection now flows through a backend-neutral dispatcher in `_reproject.py`. Public reprojection methods currently route through the rust-warp adapter, while the legacy pyproj + numpy path remains available only as internal migration scaffolding.
 
 ## Why parquet, not a STAC API URL
 
@@ -42,7 +42,7 @@ src/lazycogs/
 `open()` in `_core.py`:
 
 1. Resolves `duckdb_client`: if not provided, creates a plain `DuckdbClient()`. Validates that `href` ends in `.parquet`/`.geoparquet` when no client is supplied (a directory path is accepted when a custom client is passed).
-2. Parses `time_period` into a `_TemporalGrouper` (see `_temporal.py`).
+2. Validates `time_period` and `resampling` up front in `_core.py`, so unsupported public options fail before any storage or DuckDB I/O.
 3. Converts `bbox` from the target CRS to EPSG:4326 using `pyproj.Transformer`.
 4. Calls `_discover_bands()`: queries the parquet source via `duckdb_client.search(..., max_items=1)` to find asset keys. Assets with role `"data"` or media type `"image/tiff"` are returned first.
 5. Calls `_smoketest_store()`: fetches one sample item from the parquet, resolves the object store for a representative data asset HREF, and calls `head()` to confirm access. Raises `RuntimeError` immediately with a clear message if the store cannot reach the asset, so misconfiguration is surfaced at `open()` time rather than deferred to the first chunk read.
@@ -125,11 +125,13 @@ If the chunk bbox falls entirely outside the source image after clamping, `_nati
 
 `await reader.read(window=window)` fetches the windowed pixel data from the selected overview level (or full-res). The result is a `(bands, window_h, window_w)` array in the source CRS/grid.
 
-### 4. Reprojection dispatch and current legacy backend
+### 4. Reprojection dispatch and current backend state
 
 `_chunk_reader.py` now builds a `ReprojectRequest` and calls `reproject_tile()` in `_reproject.py` rather than reaching directly into warp-map helpers. That gives lazycogs a clean seam for swapping reprojection engines while keeping chunk orchestration unchanged.
 
-The dispatcher currently short-circuits exact same-grid reads and otherwise routes to the legacy nearest-neighbor backend, which still warps the source tile onto the destination chunk grid without GDAL:
+The dispatcher always short-circuits exact same-grid reads. After that, public reprojection requests currently route to rust-warp for `nearest`, `bilinear`, and `cubic` alike.
+
+The legacy nearest-neighbor path is still present as internal migration scaffolding and still warps the source tile onto the destination chunk grid without GDAL:
 
 1. Build a meshgrid of destination pixel-centre coordinates.
 2. Transform all coordinates from `dst_crs` to `src_crs` in one vectorised `Transformer.transform()` call.
@@ -137,7 +139,7 @@ The dispatcher currently short-circuits exact same-grid reads and otherwise rout
 4. `np.floor` rounds to the nearest-neighbor sample; numpy fancy indexing populates the output array.
 5. Out-of-bounds pixels get the nodata fill value.
 
-Nearest-neighbor is still the only active resampling method in production code. The `rust-warp` dependency is present for development and adapter work, but it is not the default engine yet.
+Public resampling is validated at `open()` time. The currently supported values are `nearest`, `bilinear`, and `cubic`. Same-grid reads bypass reprojection regardless of the selected resampling mode.
 
 ## Concurrency model
 

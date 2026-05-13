@@ -20,6 +20,7 @@ from lazycogs._executor import (
     _DUCKDB_EXECUTOR,
     _run_coroutine,
 )
+from lazycogs._reproject import ResamplingMethod
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class _ChunkReadPlan:
         chunk_height: Chunk height in pixels.
         nodata: No-data fill value, or ``None``.
         mosaic_method_cls: Mosaic method class, or ``None`` for the default.
+        resampling: Reprojection resampling method for this chunk.
         store: Pre-configured obstore ``ObjectStore`` instance, or ``None``.
         max_concurrent_reads: Maximum concurrent COG reads per chunk.
         warp_cache: Shared warp map cache across time steps.
@@ -83,6 +85,7 @@ class _ChunkReadPlan:
     chunk_height: int
     nodata: float | None
     mosaic_method_cls: type[MosaicMethodBase] | None
+    resampling: ResamplingMethod
     store: Any | None
     max_concurrent_reads: int
     warp_cache: dict
@@ -259,6 +262,7 @@ async def _run_one_date(
         chunk_height=plan.chunk_height,
         nodata=plan.nodata,
         mosaic_method_cls=plan.mosaic_method_cls,
+        resampling=plan.resampling,
         store=plan.store,
         max_concurrent_reads=plan.max_concurrent_reads,
         warp_cache=plan.warp_cache,
@@ -335,6 +339,7 @@ class MultiBandStacBackendArray(BackendArray):
         mosaic_method_cls: Mosaic method class instantiated per chunk, or
             ``None`` to use the default
             :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        resampling: Reprojection resampling method used for chunk reads.
         store: Pre-configured obstore ``ObjectStore`` instance shared across
             all chunk reads.  When ``None``, each asset HREF is resolved to a
             store via the thread-local cache in
@@ -369,6 +374,7 @@ class MultiBandStacBackendArray(BackendArray):
     dtype: np.dtype
     nodata: float | None
     mosaic_method_cls: type[MosaicMethodBase] | None = field(default=None)
+    resampling: ResamplingMethod = field(default=ResamplingMethod.NEAREST)
     store: Any | None = field(default=None)
     max_concurrent_reads: int = field(default=32)
     path_from_href: Callable[[str], str] | None = field(default=None)
@@ -559,6 +565,7 @@ class MultiBandStacBackendArray(BackendArray):
             chunk_height=win.chunk_height,
             nodata=self.nodata,
             mosaic_method_cls=self.mosaic_method_cls,
+            resampling=self.resampling,
             store=self.store,
             max_concurrent_reads=self.max_concurrent_reads,
             warp_cache={},

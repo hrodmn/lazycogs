@@ -41,6 +41,7 @@ class _ChunkContext:
     chunk_width: int
     chunk_height: int
     nodata: float | None
+    resampling: str
     store: ObjectStore | None
     path_fn: Callable[[str], str] | None
     warp_cache: dict[object, object] | None
@@ -270,6 +271,7 @@ def _apply_bands_with_warp_cache(
     dst_crs: CRS,
     dst_width: int,
     dst_height: int,
+    resampling: str = "nearest",
     warp_cache: dict[object, object] | None = None,
 ) -> dict[str, tuple[np.ndarray, float | None]]:
     """Reproject multiple band rasters through the backend-neutral interface.
@@ -286,6 +288,7 @@ def _apply_bands_with_warp_cache(
         dst_crs: CRS of the destination grid.
         dst_width: Width of the destination grid in pixels.
         dst_height: Height of the destination grid in pixels.
+        resampling: Reprojection resampling method.
         warp_cache: Optional migration-time cache shared across calls.
 
     Returns:
@@ -316,7 +319,7 @@ def _apply_bands_with_warp_cache(
                     dst_width=dst_width,
                     dst_height=dst_height,
                     nodata=effective_nodata,
-                    resampling="nearest",
+                    resampling=resampling,
                 ),
                 warp_cache=cache,
             ),
@@ -435,6 +438,7 @@ async def _read_item_band(
             ctx.dst_crs,
             ctx.chunk_width,
             ctx.chunk_height,
+            ctx.resampling,
             ctx.warp_cache,
         ),
     )
@@ -506,6 +510,7 @@ async def read_chunk_async(
     chunk_height: int,
     nodata: float | None = None,
     mosaic_method_cls: type[MosaicMethodBase] | None = None,
+    resampling: str = "nearest",
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
     warp_cache: dict | None = None,
@@ -530,6 +535,7 @@ async def read_chunk_async(
         nodata: No-data fill value.
         mosaic_method_cls: Mosaic method class instantiated once per band.
             Defaults to :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        resampling: Reprojection resampling method.
         store: Optional pre-configured obstore ``ObjectStore`` instance.
         max_concurrent_reads: Maximum number of COG reads to run concurrently.
         warp_cache: Optional cache shared across calls for reusing warp maps
@@ -553,6 +559,7 @@ async def read_chunk_async(
         chunk_width=chunk_width,
         chunk_height=chunk_height,
         nodata=nodata,
+        resampling=resampling,
         store=store,
         path_fn=path_fn,
         warp_cache=warp_cache,
@@ -612,6 +619,7 @@ def read_chunk(
     chunk_height: int,
     nodata: float | None = None,
     mosaic_method_cls: type[MosaicMethodBase] | None = None,
+    resampling: str = "nearest",
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
     warp_cache: dict | None = None,
@@ -631,6 +639,7 @@ def read_chunk(
         nodata: No-data fill value.
         mosaic_method_cls: Mosaic method class instantiated once per band.
             Defaults to :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        resampling: Reprojection resampling method.
         store: Optional pre-configured obstore ``ObjectStore`` instance.
         max_concurrent_reads: Maximum number of COG reads to run concurrently.
         warp_cache: Optional cache shared across calls for reusing warp maps
@@ -654,6 +663,7 @@ def read_chunk(
             chunk_height=chunk_height,
             nodata=nodata,
             mosaic_method_cls=mosaic_method_cls,
+            resampling=resampling,
             store=store,
             max_concurrent_reads=max_concurrent_reads,
             warp_cache=warp_cache,
