@@ -1,4 +1,6 @@
-![lazycogs](https://raw.githubusercontent.com/developmentseed/lazycogs/main/lazycogs.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/developmentseed/lazycogs/main/lazycogs.png" alt="lazycogs">
+</p>
 
 [![CI](https://github.com/developmentseed/lazycogs/actions/workflows/ci.yml/badge.svg)](https://github.com/developmentseed/lazycogs/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/lazycogs)](https://pypi.org/project/lazycogs/)

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="400"
+   height="400"
+   viewBox="0 0 200 200"
+   version="1.1"
+   id="svg8"
+   sodipodi:docname="logo.svg"
+   inkscape:version="1.4.3 (0d15f75042, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs8" />
+  <sodipodi:namedview
+     id="namedview8"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.5361895"
+     inkscape:cx="121.72977"
+     inkscape:cy="186.50043"
+     inkscape:window-width="1900"
+     inkscape:window-height="1030"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="g9" />
+  <style
+     id="style1">
+        .stroke { stroke: black; stroke-width: 2.5; fill: white; stroke-linecap: round; stroke-linejoin: round; }
+        .feature { stroke: black; stroke-width: 2; fill: none; stroke-linecap: round; }
+        .text { font-family: 'Arial Rounded MT Bold', Arial, sans-serif; font-weight: bold; fill: black; }
+    </style>
+  <g
+     id="g9"
+     transform="matrix(0.93327646,0,0,0.92351204,0.01535639,15.306394)">
+    <rect
+       width="200"
+       height="179.91104"
+       fill="#ffffff"
+       id="rect1"
+       x="9.9951649"
+       y="13.507717"
+       style="stroke-width:0.948449" />
+    <path
+       class="stroke"
+       d="m 105.51036,172.27788 89.7784,-46.31713 -89.7784,-46.317146 -89.778397,46.317146 z"
+       id="path1" />
+    <path
+       class="stroke"
+       d="M 105.51036,141.39979 195.28876,95.082658 105.51036,48.76551 15.731963,95.082658 Z"
+       id="path2" />
+    <path
+       class="stroke"
+       d="m 105.51036,110.5217 89.7784,-46.317144 -89.7784,-46.31714 -89.778397,46.31714 z"
+       id="path3" />
+    <path
+       class="feature"
+       d="m 75.584226,59.572842 q 10.474143,9.263429 20.948295,0"
+       id="path4" />
+    <path
+       class="feature"
+       d="m 114.4882,59.572842 q 10.47415,9.263429 20.94829,0"
+       id="path5" />
+    <path
+       class="feature"
+       d="m 96.532521,75.011889 q 8.977839,9.263429 17.955679,0"
+       id="path6" />
+    <path
+       d="m 169.06752,40.491542 a 8,7.1964415 0 1 0 0,14.392883 8,7.1964415 0 1 1 0,-14.392883"
+       fill="#000000"
+       id="path8"
+       style="stroke-width:0.948449" />
+  </g>
+</svg>
