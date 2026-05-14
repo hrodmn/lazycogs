@@ -14,13 +14,13 @@ from numpy import ma
 
 from lazycogs._executor import _run_coroutine
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
-from lazycogs._reproject import (
-    WarpMap,
-    _get_transformer,
-    apply_warp_map,
-    compute_warp_map,
-)
 from lazycogs._store import resolve as _resolve_store
+from lazycogs._warp import (
+    ReprojectRequest,
+    ResamplingMethod,
+    _get_transformer,
+    reproject_tile,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class _ChunkContext:
     """Immutable per-chunk parameters shared across all item reads.
 
-    Built once per chunk in async_mosaic_chunk and passed through to all
+    Built once per chunk in ``read_chunk_async`` and passed through to all
     internal helpers. Frozen to prevent accidental mutation across concurrent
     coroutines.
     """
@@ -46,9 +46,9 @@ class _ChunkContext:
     chunk_width: int
     chunk_height: int
     nodata: float | None
+    resampling: ResamplingMethod
     store: ObjectStore | None
     path_fn: Callable[[str], str] | None
-    warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None
 
 
 def _log_batch_failure(
@@ -269,71 +269,47 @@ async def _open_and_window(
     return geotiff, reader, window, path
 
 
-def _apply_bands_with_warp_cache(
+def _reproject_bands(
     band_rasters: list[tuple[str, RasterArray, CRS, float | None]],
     dst_transform: Affine,
     dst_crs: CRS,
     dst_width: int,
     dst_height: int,
-    warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None = None,
+    resampling: ResamplingMethod = ResamplingMethod.NEAREST,
 ) -> dict[str, tuple[np.ndarray, float | None]]:
-    """Apply warp maps to multiple band rasters, reusing maps for identical geometries.
-
-    Checks ``warp_cache`` (keyed on ``(tuple(raster.transform), src_crs.to_wkt())``)
-    before computing a new warp map.  When ``warp_cache`` is shared across calls
-    (e.g. across time steps in a single chunk read), warp maps for recurring tile
-    geometries are computed only once.  Bands with different geometries each get
-    their own correct warp map.
-
-    This function is designed to run inside a thread executor — it is CPU-bound
-    and must not be called from the async event loop directly.  When ``warp_cache``
-    is shared across concurrent executor calls, two threads may both compute the
-    same warp map before either stores it; this is safe because ``compute_warp_map``
-    is deterministic and the duplicate result is simply overwritten.
+    """Reproject multiple band rasters onto one destination grid.
 
     Args:
         band_rasters: List of ``(band_name, raster, src_crs, effective_nodata)``
-            tuples.  ``raster`` must have ``.transform`` (Affine) and ``.data``
+            tuples. ``raster`` must have ``.transform`` (Affine) and ``.data``
             (ndarray of shape ``(bands, h, w)``) attributes.
         dst_transform: Affine transform of the destination grid.
         dst_crs: CRS of the destination grid.
         dst_width: Width of the destination grid in pixels.
         dst_height: Height of the destination grid in pixels.
-        warp_cache: Optional external cache shared across calls.  When ``None``
-            a fresh local dict is used (original per-item behaviour).
+        resampling: Reprojection resampling method.
 
     Returns:
         ``dict`` mapping band name to ``(reprojected_array, effective_nodata)``.
 
     """
-    cache: dict[tuple[tuple[float, ...], CRS], WarpMap] = (
-        warp_cache if warp_cache is not None else {}
-    )
     results: dict[str, tuple[np.ndarray, float | None]] = {}
 
     for band, raster, src_crs, effective_nodata in band_rasters:
-        # Fast path: skip reprojection when the read window already matches the
-        # destination chunk exactly (same CRS, same affine, same pixel dimensions).
-        if (
-            src_crs.equals(dst_crs)
-            and raster.transform == dst_transform
-            and raster.data.shape[1] == dst_height
-            and raster.data.shape[2] == dst_width
-        ):
-            results[band] = (raster.data, effective_nodata)
-            continue
-        cache_key = (tuple(raster.transform), src_crs)
-        if cache_key not in cache:
-            cache[cache_key] = compute_warp_map(
-                src_transform=raster.transform,
-                src_crs=src_crs,
-                dst_transform=dst_transform,
-                dst_crs=dst_crs,
-                dst_width=dst_width,
-                dst_height=dst_height,
-            )
         results[band] = (
-            apply_warp_map(raster.data, cache[cache_key], effective_nodata),
+            reproject_tile(
+                ReprojectRequest(
+                    data=raster.data,
+                    src_transform=raster.transform,
+                    src_crs=src_crs,
+                    dst_transform=dst_transform,
+                    dst_crs=dst_crs,
+                    dst_width=dst_width,
+                    dst_height=dst_height,
+                    nodata=effective_nodata,
+                    resampling=resampling,
+                ),
+            ),
             effective_nodata,
         )
 
@@ -345,13 +321,12 @@ async def _read_item_band(
     bands: list[str],
     ctx: _ChunkContext,
 ) -> dict[str, tuple[np.ndarray, float | None]] | None:
-    """Read and reproject multiple bands from one STAC item, sharing warp maps.
+    """Read and reproject multiple bands from one STAC item.
 
     Opens all band COGs concurrently, computes per-band windows independently
     (so bands with different native resolutions or extents are handled correctly),
     reads all windows concurrently, then dispatches a single thread-executor call
-    that applies warp maps with caching: bands sharing the same source CRS and
-    window transform reuse the same warp map.
+    that reprojects all bands onto the destination grid.
 
     Args:
         item: STAC item dict containing an ``assets`` key.
@@ -439,17 +414,16 @@ async def _read_item_band(
         for band, raster in read_results
     ]
 
-    # Compute warp maps and apply, sharing maps across bands with identical geometry.
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,
-        lambda: _apply_bands_with_warp_cache(
+        lambda: _reproject_bands(
             band_rasters,
             ctx.chunk_affine,
             ctx.dst_crs,
             ctx.chunk_width,
             ctx.chunk_height,
-            ctx.warp_cache,
+            ctx.resampling,
         ),
     )
 
@@ -520,16 +494,15 @@ async def read_chunk_async(
     chunk_height: int,
     nodata: float | None = None,
     mosaic_method_cls: type[MosaicMethodBase] | None = None,
+    resampling: ResamplingMethod = ResamplingMethod.NEAREST,
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
-    warp_cache: dict | None = None,
     path_fn: Callable[[str], str] | None = None,
 ) -> dict[str, np.ndarray]:
     """Read, reproject, and mosaic multiple bands from a list of STAC items.
 
-    Processes all requested bands together per item so that bands sharing the
-    same source geometry compute the reprojection warp map only once (via
-    :func:`_apply_bands_with_warp_cache`).
+    Processes all requested bands together per item so they can be reprojected
+    in one thread-executor call.
 
     Items are processed in batches of ``max_concurrent_reads``.  When all
     per-band mosaic methods signal completion, remaining batches are skipped.
@@ -544,10 +517,9 @@ async def read_chunk_async(
         nodata: No-data fill value.
         mosaic_method_cls: Mosaic method class instantiated once per band.
             Defaults to :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        resampling: Reprojection resampling method.
         store: Optional pre-configured obstore ``ObjectStore`` instance.
         max_concurrent_reads: Maximum number of COG reads to run concurrently.
-        warp_cache: Optional cache shared across calls for reusing warp maps
-            from earlier time steps.
         path_fn: Optional callable that takes an asset HREF and returns the
             object path to use with *store*.  Forwarded to
             :func:`_read_item_band`.
@@ -567,9 +539,9 @@ async def read_chunk_async(
         chunk_width=chunk_width,
         chunk_height=chunk_height,
         nodata=nodata,
+        resampling=resampling,
         store=store,
         path_fn=path_fn,
-        warp_cache=warp_cache,
     )
 
     semaphore = asyncio.Semaphore(max_concurrent_reads)
@@ -626,9 +598,9 @@ def read_chunk(
     chunk_height: int,
     nodata: float | None = None,
     mosaic_method_cls: type[MosaicMethodBase] | None = None,
+    resampling: ResamplingMethod = ResamplingMethod.NEAREST,
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
-    warp_cache: dict | None = None,
     path_fn: Callable[[str], str] | None = None,
 ) -> dict[str, np.ndarray]:
     """Run :func:`read_chunk_async` on the persistent per-thread background loop.
@@ -645,10 +617,9 @@ def read_chunk(
         nodata: No-data fill value.
         mosaic_method_cls: Mosaic method class instantiated once per band.
             Defaults to :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        resampling: Reprojection resampling method.
         store: Optional pre-configured obstore ``ObjectStore`` instance.
         max_concurrent_reads: Maximum number of COG reads to run concurrently.
-        warp_cache: Optional cache shared across calls for reusing warp maps
-            from earlier time steps.
         path_fn: Optional callable that takes an asset HREF and returns the
             object path to use with *store*.
 
@@ -668,9 +639,9 @@ def read_chunk(
             chunk_height=chunk_height,
             nodata=nodata,
             mosaic_method_cls=mosaic_method_cls,
+            resampling=resampling,
             store=store,
             max_concurrent_reads=max_concurrent_reads,
-            warp_cache=warp_cache,
             path_fn=path_fn,
         ),
     )

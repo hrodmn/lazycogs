@@ -29,6 +29,7 @@ dependencies = [
     "pandas>=3.0.2",
     "pyproj>=3.7.2",
     "rasterix>=0.2.0",
+    "rust-warp",
     "rustac[arrow]>=0.9.10",
     "xarray>=2026.2.0",
     "xproj>=0.2.0",
@@ -115,3 +116,6 @@ python_files = ["test_*.py", "bench_*.py"]
 markers = [
     "benchmark: performance benchmarks (run with --benchmark-enable)",
 ]
+
+[tool.uv.sources]
+rust-warp = { git = "https://github.com/jakenotjay/rust-warp.git" }

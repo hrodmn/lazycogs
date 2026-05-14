@@ -24,7 +24,7 @@ One constraint worth naming: lazycogs only reads Cloud Optimized GeoTIFFs. If yo
 | STAC search + spatial indexing | `rustac` (DuckDB + geoparquet) |
 | COG I/O | `async-geotiff` (Rust, no GDAL) |
 | Cloud storage | `obstore` |
-| Reprojection | `pyproj` + numpy |
+| Reprojection | `rust-warp` via `lazycogs.ResamplingMethod` |
 | Lazy dataset construction | xarray `BackendEntrypoint` + `LazilyIndexedArray` |
 
 ## Installation
@@ -32,6 +32,8 @@ One constraint worth naming: lazycogs only reads Cloud Optimized GeoTIFFs. If yo
 ```bash
 pip install lazycogs
 ```
+
+`rust-warp` is currently pinned from GitHub via uv pending a stable release flow for this dependency.
 
 ## Coordinate convention
 
@@ -73,7 +75,10 @@ da = lazycogs.open(
     bbox=dst_bbox,
     crs=dst_crs,
     resolution=10.0,
+    resampling=lazycogs.ResamplingMethod.NEAREST,
 )
+
+# Other supported modes: ResamplingMethod.BILINEAR and ResamplingMethod.CUBIC
 ```
 
 ### Async loading

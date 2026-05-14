@@ -20,6 +20,7 @@ from lazycogs._executor import (
     _DUCKDB_EXECUTOR,
     _run_coroutine,
 )
+from lazycogs._warp import ResamplingMethod
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from obstore.store import ObjectStore
     from rustac import DuckdbClient
 
     from lazycogs._mosaic_methods import MosaicMethodBase
@@ -39,11 +41,6 @@ class _ChunkReadPlan:
     Built once in ``_async_getitem`` and passed through to
     ``_read_chunk_all_dates`` and ``_run_one_date``. Frozen to make the
     read-only intent explicit.
-
-    Note: ``warp_cache`` is a mutable dict despite the frozen dataclass. This
-    is intentional — concurrent writes from ``asyncio.gather`` coroutines are
-    safe because ``compute_warp_map`` is deterministic (a duplicate write
-    simply overwrites an identical value).
 
     Attributes:
         duckdb_client: ``DuckdbClient`` instance used for STAC queries.
@@ -61,9 +58,9 @@ class _ChunkReadPlan:
         chunk_height: Chunk height in pixels.
         nodata: No-data fill value, or ``None``.
         mosaic_method_cls: Mosaic method class, or ``None`` for the default.
+        resampling: Reprojection resampling method for this chunk.
         store: Pre-configured obstore ``ObjectStore`` instance, or ``None``.
         max_concurrent_reads: Maximum concurrent COG reads per chunk.
-        warp_cache: Shared warp map cache across time steps.
         path_fn: Optional callable extracting an object path from an asset HREF.
 
     """
@@ -83,9 +80,9 @@ class _ChunkReadPlan:
     chunk_height: int
     nodata: float | None
     mosaic_method_cls: type[MosaicMethodBase] | None
-    store: Any | None
+    resampling: ResamplingMethod
+    store: ObjectStore | None
     max_concurrent_reads: int
-    warp_cache: dict
     path_fn: Callable[[str], str] | None
 
 
@@ -259,9 +256,9 @@ async def _run_one_date(
         chunk_height=plan.chunk_height,
         nodata=plan.nodata,
         mosaic_method_cls=plan.mosaic_method_cls,
+        resampling=plan.resampling,
         store=plan.store,
         max_concurrent_reads=plan.max_concurrent_reads,
-        warp_cache=plan.warp_cache,
         path_fn=plan.path_fn,
     )
     logger.debug(
@@ -306,9 +303,9 @@ class MultiBandStacBackendArray(BackendArray):
     One instance is created at ``open()`` time.  No pixel I/O happens until
     ``__getitem__`` is called inside a dask task.  Reads all selected bands
     together per time step via
-    :func:`~lazycogs._chunk_reader.async_mosaic_chunk`, issuing a
-    single DuckDB query per time step and sharing reprojection warp maps across
-    bands that have identical source geometry.
+    :func:`~lazycogs._chunk_reader.read_chunk_async`, issuing a
+    single DuckDB query per time step and reprojecting all selected bands for
+    an item onto the same destination chunk.
 
     Attributes:
         parquet_path: Path to the geoparquet file or hive-partitioned directory
@@ -335,6 +332,7 @@ class MultiBandStacBackendArray(BackendArray):
         mosaic_method_cls: Mosaic method class instantiated per chunk, or
             ``None`` to use the default
             :class:`~lazycogs._mosaic_methods.FirstMethod`.
+        resampling: Reprojection resampling method used for chunk reads.
         store: Pre-configured obstore ``ObjectStore`` instance shared across
             all chunk reads.  When ``None``, each asset HREF is resolved to a
             store via the thread-local cache in
@@ -369,7 +367,8 @@ class MultiBandStacBackendArray(BackendArray):
     dtype: np.dtype
     nodata: float | None
     mosaic_method_cls: type[MosaicMethodBase] | None = field(default=None)
-    store: Any | None = field(default=None)
+    resampling: ResamplingMethod = field(default=ResamplingMethod.NEAREST)
+    store: ObjectStore | None = field(default=None)
     max_concurrent_reads: int = field(default=32)
     path_from_href: Callable[[str], str] | None = field(default=None)
     shape: tuple[int, ...] = field(init=False)
@@ -521,8 +520,8 @@ class MultiBandStacBackendArray(BackendArray):
         Single source of truth for chunk reads. Reads all selected bands
         together per time step via
         :func:`~lazycogs._chunk_reader.read_chunk_async`, issuing a single
-        DuckDB query per time step and sharing reprojection warp maps across
-        bands that have identical source geometry.
+        DuckDB query per time step and reprojecting all selected bands for an
+        item onto the same destination chunk.
 
         Args:
             key: A tuple of ``int | slice`` objects for the
@@ -559,9 +558,9 @@ class MultiBandStacBackendArray(BackendArray):
             chunk_height=win.chunk_height,
             nodata=self.nodata,
             mosaic_method_cls=self.mosaic_method_cls,
+            resampling=self.resampling,
             store=self.store,
             max_concurrent_reads=self.max_concurrent_reads,
-            warp_cache={},
             path_fn=self.path_from_href,
         )
 

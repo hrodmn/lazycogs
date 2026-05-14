@@ -1,7 +1,8 @@
 """lazycogs: lazy xarray DataArrays from STAC COG collections."""
 
 from lazycogs._chunk_reader import read_chunk, read_chunk_async
-from lazycogs._core import open  # noqa: A004
+from lazycogs._core import DEFAULT_RESAMPLING, SUPPORTED_RESAMPLING
+from lazycogs._core import open as open  # noqa: A004
 from lazycogs._executor import set_reproject_workers
 from lazycogs._explain import (  # noqa: F401 — registers da.lazycogs accessor
     ChunkRead,
@@ -21,8 +22,11 @@ from lazycogs._mosaic_methods import (
     StdevMethod,
 )
 from lazycogs._store import store_for
+from lazycogs._warp import ResamplingMethod
 
 __all__ = [
+    "DEFAULT_RESAMPLING",
+    "SUPPORTED_RESAMPLING",
     "ChunkRead",
     "CogRead",
     "CountMethod",
@@ -33,6 +37,7 @@ __all__ = [
     "MeanMethod",
     "MedianMethod",
     "MosaicMethodBase",
+    "ResamplingMethod",
     "StdevMethod",
     "align_bbox",
     "open",

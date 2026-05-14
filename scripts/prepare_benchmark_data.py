@@ -3,7 +3,7 @@
 
 Queries the Element84 Earth Search STAC API for Sentinel-2 items over western
 Colorado, downloads the selected band assets to a local directory, then writes
-a new parquet file with hrefs pointing to the local files.  Also synthesises an
+a new parquet file with hrefs pointing to the local files. Also synthesises an
 expanded parquet with 12 monthly time steps (cloned from the real items, same
 asset hrefs) for concurrency benchmarks.
 
@@ -11,6 +11,11 @@ Creates .benchmark_data/ (gitignored) with:
   cogs/{item_id}/{band}.tif        downloaded COG files
   benchmark_items.parquet          parquet index with file:// hrefs
   expanded_benchmark_items.parquet 12 synthetic time steps, same COG files
+
+The parquet files are always rewritten to point at this checkout's local
+``.benchmark_data/cogs`` paths. That keeps benchmark HREFs valid after moving
+or renaming the repository directory. ``--overwrite`` only forces re-downloads
+of the raw STAC query and local COG files.
 
 Usage:
     uv run python scripts/prepare_benchmark_data.py
@@ -27,7 +32,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import rustac
-from obstore.store import from_url
+from obstore.store import LocalStore, from_url
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,7 @@ DATETIME = "2025-07-02/2025-07-05"
 # Red (10m) + Narrow NIR (20m) — sufficient for NDVI benchmarks
 BANDS = ["red", "nir08"]
 LIMIT = 10
+DOWNLOAD_CONCURRENCY = 8
 
 # 12 monthly dates used for the expanded concurrency benchmark dataset.
 # One per month from 2024-01 through 2024-12, anchored to the 15th so dates
@@ -48,25 +54,85 @@ SYNTHETIC_DATES = [f"2024-{month:02d}-15T12:00:00Z" for month in range(1, 13)]
 DATA_DIR = Path(__file__).parents[1] / ".benchmark_data"
 
 
-def _download(href: str, dest: Path) -> None:
-    """Download a cloud object to a local file using obstore."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
+def _local_asset_path(cog_dir: Path, item_id: str, band: str) -> Path:
+    """Return the local benchmark asset path for one item band."""
+    return cog_dir / item_id / f"{band}.tif"
+
+
+def _remote_store_key(href: str) -> tuple[str, str]:
+    """Return the obstore root URL and object key for an asset HREF."""
     parsed = urlparse(href)
-    root_url = f"{parsed.scheme}://{parsed.netloc}"
-    path = parsed.path.lstrip("/")
-    kwargs = {"skip_signature": True}
-    store = from_url(root_url, **kwargs)
-    logger.info("Downloading %s", href)
-    result = store.get(path)
-    dest.write_bytes(result.bytes())
-    logger.info("Wrote %s (%.1f MB)", dest, dest.stat().st_size / 1_048_576)
+    return f"{parsed.scheme}://{parsed.netloc}", parsed.path.lstrip("/")
+
+
+async def _download(
+    href: str,
+    dest: Path,
+    *,
+    local_store: LocalStore,
+    remote_stores: dict[str, object],
+    semaphore: asyncio.Semaphore,
+) -> None:
+    """Download a cloud object to a local file using obstore's async APIs."""
+    root_url, remote_key = _remote_store_key(href)
+    if root_url not in remote_stores:
+        remote_stores[root_url] = from_url(root_url, skip_signature=True)
+    local_key = str(dest.relative_to(Path(local_store.prefix)))
+
+    async with semaphore:
+        logger.info("Downloading %s", href)
+        result = await remote_stores[root_url].get_async(remote_key)
+        await local_store.put_async(local_key, result)
+        size = await asyncio.to_thread(lambda: dest.stat().st_size)
+        logger.info("Wrote %s (%.1f MB)", dest, size / 1_048_576)
+
+
+async def _localize_item_assets(
+    item: dict,
+    cog_dir: Path,
+    *,
+    overwrite: bool,
+    local_store: LocalStore,
+    remote_stores: dict[str, object],
+    semaphore: asyncio.Semaphore,
+) -> dict:
+    """Return ``item`` with benchmark assets rewritten to local ``file://`` HREFs."""
+    item_id = item["id"]
+    local_assets = {}
+    download_tasks = []
+
+    for band in BANDS:
+        if band not in item.get("assets", {}):
+            logger.warning("Item %s has no asset %r; skipping.", item_id, band)
+            continue
+        href = item["assets"][band]["href"]
+        local_path = _local_asset_path(cog_dir, item_id, band)
+        if overwrite or not local_path.exists():
+            download_tasks.append(
+                _download(
+                    href,
+                    local_path,
+                    local_store=local_store,
+                    remote_stores=remote_stores,
+                    semaphore=semaphore,
+                ),
+            )
+        local_assets[band] = {
+            **item["assets"][band],
+            "href": local_path.as_uri(),
+        }
+
+    if download_tasks:
+        await asyncio.gather(*download_tasks)
+
+    return {**item, "assets": local_assets}
 
 
 def _expand_items(source_items: list[dict], dates: list[str]) -> list[dict]:
     """Clone source_items across synthetic dates by round-robin assignment.
 
-    Each clone keeps the original geometry, bbox, and asset hrefs.  Only the
-    ``id`` and ``properties.datetime`` are changed.  The result has one item
+    Each clone keeps the original geometry, bbox, and asset hrefs. Only the
+    ``id`` and ``properties.datetime`` are changed. The result has one item
     per date, suitable for building a multi-time-step benchmark parquet without
     downloading additional data.
 
@@ -111,37 +177,35 @@ async def main(*, overwrite: bool = False) -> None:
     items: list[dict] = rustac.search_sync(str(raw_parquet), use_duckdb=True)
     logger.info("Found %d items", len(items))
 
-    local_items = []
-    for item in items:
-        item_id = item["id"]
-        local_assets = {}
-        for band in BANDS:
-            if band not in item.get("assets", {}):
-                logger.warning("Item %s has no asset %r; skipping.", item_id, band)
-                continue
-            href = item["assets"][band]["href"]
-            local_path = cog_dir / item_id / f"{band}.tif"
-            if overwrite or not local_path.exists():
-                _download(href, local_path)
-            local_assets[band] = {
-                **item["assets"][band],
-                "href": local_path.as_uri(),
-            }
-        local_items.append({**item, "assets": local_assets})
+    local_store = LocalStore(prefix=str(cog_dir), mkdir=True)
+    remote_stores: dict[str, object] = {}
+    semaphore = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+    local_items = await asyncio.gather(
+        *[
+            _localize_item_assets(
+                item,
+                cog_dir,
+                overwrite=overwrite,
+                local_store=local_store,
+                remote_stores=remote_stores,
+                semaphore=semaphore,
+            )
+            for item in items
+        ],
+    )
 
     out_parquet = DATA_DIR / "benchmark_items.parquet"
     rustac.write_sync(str(out_parquet), local_items)
     logger.info("Wrote benchmark parquet: %s", out_parquet)
 
     expanded_parquet = DATA_DIR / "expanded_benchmark_items.parquet"
-    if overwrite or not expanded_parquet.exists():
-        expanded = _expand_items(local_items, SYNTHETIC_DATES)
-        rustac.write_sync(str(expanded_parquet), expanded)
-        logger.info(
-            "Wrote expanded benchmark parquet (%d time steps): %s",
-            len(SYNTHETIC_DATES),
-            expanded_parquet,
-        )
+    expanded = _expand_items(local_items, SYNTHETIC_DATES)
+    rustac.write_sync(str(expanded_parquet), expanded)
+    logger.info(
+        "Wrote expanded benchmark parquet (%d time steps): %s",
+        len(SYNTHETIC_DATES),
+        expanded_parquet,
+    )
 
     logger.info(
         "Run benchmarks with: uv run pytest tests/benchmarks/ --benchmark-enable",

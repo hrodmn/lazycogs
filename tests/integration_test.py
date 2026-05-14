@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import contextlib
 import hashlib
@@ -13,6 +14,7 @@ import lazycogs
 
 logging.basicConfig(level="WARN")
 logging.getLogger("lazycogs").setLevel("DEBUG")
+logger = logging.getLogger(__name__)
 
 
 def _parquet_path(
@@ -68,13 +70,20 @@ def measure(label: str):
     yield
     elapsed = time.perf_counter() - t0
     rss_after = _rss_mb()
-    print(
-        f"[{label}] "
-        f"time={elapsed:.2f}s  "
-        f"rss_before={rss_before:.0f}MB  "
-        f"rss_after={rss_after:.0f}MB  "
-        f"delta={rss_after - rss_before:+.0f}MB",
+    logger.warning(
+        "[%s] time=%.2fs rss_before=%.0fMB rss_after=%.0fMB delta=%+.0fMB",
+        label,
+        elapsed,
+        rss_before,
+        rss_after,
+        rss_after - rss_before,
     )
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse command-line options for the integration script."""
+    parser = argparse.ArgumentParser()
+    return parser.parse_args()
 
 
 async def run():
@@ -96,7 +105,7 @@ async def run():
         bbox=bbox_4326,
         limit=limit,
     )
-    print(f"cache: {items_parquet}")
+    logger.warning("cache: %s", items_parquet)
 
     if not items_parquet.exists():
         await rustac.search_to(
@@ -108,7 +117,6 @@ async def run():
             limit=limit,
         )
 
-    # --- daily time steps ---
     store = lazycogs.store_for(str(items_parquet), skip_signature=True)
     da = lazycogs.open(
         str(items_parquet),
@@ -120,10 +128,10 @@ async def run():
         dtype="int16",
         store=store,
     )
-    print(f"\ndaily array: {da}")
+    logger.warning("daily array: %s", da)
 
-    with measure("daily point (chunked)"):
-        _ = da.chunk(time=1).sel(x=299965, y=2653947, method="nearest").compute()
+    with measure("daily point"):
+        _ = da.sel(x=299965, y=2653947, method="nearest").compute()
 
     subset = da.sel(
         x=slice(100_000, 400_000),
@@ -134,4 +142,5 @@ async def run():
 
 
 if __name__ == "__main__":
+    args = _parse_args()
     asyncio.run(run())

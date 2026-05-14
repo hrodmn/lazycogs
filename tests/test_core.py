@@ -12,8 +12,14 @@ from rustac import DuckdbClient
 
 import lazycogs
 from lazycogs._backend import MultiBandStacBackendArray
-from lazycogs._core import _build_time_steps, _smoketest_store
+from lazycogs._core import (
+    DEFAULT_RESAMPLING,
+    SUPPORTED_RESAMPLING,
+    _build_time_steps,
+    _smoketest_store,
+)
 from lazycogs._temporal import _DayGrouper, _FixedDayGrouper, _MonthGrouper
+from lazycogs._warp import ResamplingMethod
 
 
 def _items_to_arrow(items: list[dict]) -> rustac.DuckdbClient:
@@ -82,6 +88,13 @@ def test_open_accepts_parquet_extension_passes_validation(tmp_path):
         )
     # The error should not be the extension validation error
     assert "must be a .parquet" not in str(exc_info.value)
+
+
+def test_rust_warp_dependency_available():
+    """The configured rust-warp dependency is importable in the test environment."""
+    import rust_warp
+
+    assert callable(rust_warp.reproject_array)
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +271,67 @@ def test_open_invalid_time_period_raises():
         )
 
 
+@pytest.mark.parametrize("resampling", SUPPORTED_RESAMPLING)
+def test_open_accepts_supported_resampling_values(tmp_path, resampling):
+    """open() accepts each currently supported resampling value."""
+    parquet = tmp_path / "items.parquet"
+    parquet.write_bytes(b"")
+
+    with (
+        patch("lazycogs._core._discover_bands", return_value=["B04"]),
+        patch("lazycogs._core._smoketest_store"),
+        patch(
+            "lazycogs._core._build_time_steps",
+            return_value=(["2023-01-15"], [np.datetime64("2023-01-15", "D")]),
+        ),
+    ):
+        da = lazycogs.open(
+            str(parquet),
+            bbox=(0.0, 0.0, 10.0, 10.0),
+            crs="EPSG:4326",
+            resolution=1.0,
+            resampling=resampling,
+        )
+
+    assert da.attrs["_stac_backend"].resampling is resampling
+
+
+def test_open_accepts_resampling_enum(tmp_path):
+    """open() accepts ``ResamplingMethod`` enum values directly."""
+    parquet = tmp_path / "items.parquet"
+    parquet.write_bytes(b"")
+
+    with (
+        patch("lazycogs._core._discover_bands", return_value=["B04"]),
+        patch("lazycogs._core._smoketest_store"),
+        patch(
+            "lazycogs._core._build_time_steps",
+            return_value=(["2023-01-15"], [np.datetime64("2023-01-15", "D")]),
+        ),
+    ):
+        da = lazycogs.open(
+            str(parquet),
+            bbox=(0.0, 0.0, 10.0, 10.0),
+            crs="EPSG:4326",
+            resolution=1.0,
+            resampling=ResamplingMethod.CUBIC,
+        )
+
+    assert da.attrs["_stac_backend"].resampling is ResamplingMethod.CUBIC
+
+
+def test_open_rejects_string_resampling():
+    """open() requires the public resampling enum at API entry."""
+    with pytest.raises(TypeError, match="resampling must be a ResamplingMethod"):
+        lazycogs.open(
+            "items.parquet",
+            bbox=(-93.5, 44.5, -93.0, 45.0),
+            crs="EPSG:4326",
+            resolution=0.0001,
+            resampling="lanczos",
+        )
+
+
 def test_open_works_inside_running_event_loop(tmp_path):
     """open() does not raise RuntimeError when called inside a running event loop."""
 
@@ -350,6 +424,7 @@ def test_open_sets_expected_dataarray_attributes(tmp_path):
 
     # Internal bookkeeping attributes
     assert isinstance(da.attrs["_stac_backend"], MultiBandStacBackendArray)
+    assert da.attrs["_stac_backend"].resampling == DEFAULT_RESAMPLING
     assert da.attrs["_stac_time_coords"].dtype == np.dtype("datetime64[D]")
 
 
