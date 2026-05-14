@@ -20,6 +20,7 @@ import lazycogs
 from lazycogs import FirstMethod, MedianMethod, MosaicMethodBase, set_reproject_workers
 from lazycogs._warp import ReprojectRequest, ResamplingMethod, reproject_tile
 
+from ._profiling import add_resource_profile
 from .conftest import (
     BENCHMARK_BBOX,
     BENCHMARK_CRS,
@@ -71,12 +72,17 @@ def _benchmark_request(
     )
 
 
+def _profile_then_benchmark(benchmark, run):
+    """Attach one-shot resource info, then run the pytest benchmark."""
+    add_resource_profile(benchmark, run)
+    benchmark(run)
+
+
 @pytest.mark.benchmark
 def test_small_window_nearest_reprojection(benchmark) -> None:
     """Benchmark the representative nearest-neighbor rust-warp path."""
     request = _benchmark_request(dst_resolution=20.0)
-
-    benchmark(reproject_tile, request)
+    _profile_then_benchmark(benchmark, lambda: reproject_tile(request))
 
 
 @pytest.mark.benchmark
@@ -117,20 +123,23 @@ def test_small_window_reprojection_modes(
 ) -> None:
     """Show the cost gap between no-op, nearest, and interpolating modes."""
     benchmark.extra_info["mode"] = label
-    benchmark(
-        reproject_tile,
-        ReprojectRequest(
-            data=reproject_request.data,
-            src_transform=reproject_request.src_transform,
-            src_crs=reproject_request.src_crs,
-            dst_transform=reproject_request.dst_transform,
-            dst_crs=reproject_request.dst_crs,
-            dst_width=reproject_request.dst_width,
-            dst_height=reproject_request.dst_height,
-            nodata=reproject_request.nodata,
-            resampling=resampling,
-        ),
-    )
+
+    def run() -> np.ndarray:
+        return reproject_tile(
+            ReprojectRequest(
+                data=reproject_request.data,
+                src_transform=reproject_request.src_transform,
+                src_crs=reproject_request.src_crs,
+                dst_transform=reproject_request.dst_transform,
+                dst_crs=reproject_request.dst_crs,
+                dst_width=reproject_request.dst_width,
+                dst_height=reproject_request.dst_height,
+                nodata=reproject_request.nodata,
+                resampling=resampling,
+            ),
+        )
+
+    _profile_then_benchmark(benchmark, run)
 
 
 @pytest.mark.benchmark
@@ -144,14 +153,17 @@ def test_open_overhead(
     Measures parquet queries, band discovery, time-step building, and grid
     computation.
     """
-    benchmark(
-        lazycogs.open,
-        benchmark_parquet,
-        bbox=BENCHMARK_BBOX,
-        crs=BENCHMARK_CRS,
-        resolution=60.0,
-        **benchmark_open_kwargs,
-    )
+
+    def run() -> object:
+        return lazycogs.open(
+            benchmark_parquet,
+            bbox=BENCHMARK_BBOX,
+            crs=BENCHMARK_CRS,
+            resolution=60.0,
+            **benchmark_open_kwargs,
+        )
+
+    _profile_then_benchmark(benchmark, run)
 
 
 @pytest.mark.benchmark
@@ -172,7 +184,7 @@ def test_full_compute(
         )
         return da.compute()
 
-    benchmark(run)
+    _profile_then_benchmark(benchmark, run)
 
 
 @pytest.mark.benchmark
@@ -197,7 +209,7 @@ def test_mosaic_method(
         )
         return da.compute()
 
-    benchmark(run)
+    _profile_then_benchmark(benchmark, run)
 
 
 @pytest.mark.benchmark
@@ -230,7 +242,7 @@ def test_reproject_workers(
         return da.compute()
 
     try:
-        benchmark(run)
+        _profile_then_benchmark(benchmark, run)
     finally:
         # Reset to default so other benchmarks are not affected.
         set_reproject_workers(min(__import__("os").cpu_count() or 4, 4))
@@ -260,7 +272,7 @@ def test_native_crs_resolution(
         )
         return da.compute()
 
-    benchmark(run)
+    _profile_then_benchmark(benchmark, run)
 
 
 @pytest.mark.benchmark
@@ -295,7 +307,7 @@ def test_time_step_parallelism(
         )
         return da.compute()
 
-    benchmark(run)
+    _profile_then_benchmark(benchmark, run)
 
 
 @pytest.mark.benchmark
@@ -331,4 +343,4 @@ def test_band_access_pattern(
         )
         return da.compute()
 
-    benchmark(run)
+    _profile_then_benchmark(benchmark, run)
