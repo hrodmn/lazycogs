@@ -16,9 +16,10 @@ from pyproj import CRS, Transformer
 
 from lazycogs._chunk_reader import _ChunkContext, _open_and_window
 from lazycogs._executor import _DUCKDB_EXECUTOR, _run_coroutine
+from lazycogs._warp import ResamplingMethod
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from obstore.store import ObjectStore
 
@@ -448,6 +449,7 @@ async def _inspect_item_async(
     chunk_width: int,
     chunk_height: int,
     store: ObjectStore | None = None,
+    path_fn: Callable[[str], str] | None = None,
 ) -> CogRead | None:
     """Open a COG header and compute the overview level and read window.
 
@@ -461,6 +463,8 @@ async def _inspect_item_async(
         chunk_width: Chunk width in pixels.
         chunk_height: Chunk height in pixels.
         store: Optional pre-configured obstore ``ObjectStore``.
+        path_fn: Optional callable that maps an asset HREF to the object path
+            used with ``store``.
 
     Returns:
         A :class:`CogRead` with all header fields populated, or ``None`` if
@@ -473,9 +477,9 @@ async def _inspect_item_async(
         chunk_width=chunk_width,
         chunk_height=chunk_height,
         nodata=None,
+        resampling=ResamplingMethod.NEAREST,
         store=store,
-        path_fn=None,
-        warp_cache=None,
+        path_fn=path_fn,
     )
     opened = await _open_and_window(item, band, ctx)
     if opened is None:
@@ -634,6 +638,7 @@ async def _explain_async(
                             actual_w,
                             actual_h,
                             backend.store,
+                            backend.path_from_href,
                         )
                         for item in items
                     ],

@@ -9,8 +9,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from asyncio.futures import Future
-    from types import CoroutineType
+    from collections.abc import Coroutine
 
 config: dict[str, int | None] = {"max_workers": None}
 
@@ -28,7 +27,7 @@ _DUCKDB_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 def _default_workers() -> int:
     """Return the default worker count: CPUs up to a cap of 4.
 
-    Reprojection (pyproj + numpy) is memory-bandwidth-bound, not compute-bound.
+    Reprojection is memory-bandwidth-bound, not compute-bound.
     Benchmarks show diminishing returns beyond 4 concurrent threads because they
     saturate the memory bus rather than adding CPU throughput. Keep the default
     conservative.
@@ -109,7 +108,7 @@ def _get_or_create_background_loop() -> asyncio.AbstractEventLoop:
     return loop
 
 
-def _run_coroutine(coro: CoroutineType) -> Future:
+def _run_coroutine[T](coro: Coroutine[object, object, T]) -> T:
     """Run an async coroutine from sync code.
 
     Submits the coroutine to a persistent per-thread background event loop,

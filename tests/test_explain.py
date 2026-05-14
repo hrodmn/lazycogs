@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from collections.abc import Callable
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
@@ -22,6 +23,7 @@ from lazycogs._explain import (
     _roi_pixel_offsets,
 )
 from lazycogs._mosaic_methods import FirstMethod
+from lazycogs._warp import ResamplingMethod
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,6 +48,8 @@ def _make_backend(
     dst_width: int = 10,
     dst_height: int = 10,
     affine: Affine | None = None,
+    resampling: ResamplingMethod = ResamplingMethod.NEAREST,
+    path_from_href: Callable[[str], str] | None = None,
 ) -> MultiBandStacBackendArray:
     """Return a minimal MultiBandStacBackendArray for unit testing."""
     if dates is None:
@@ -70,6 +74,8 @@ def _make_backend(
         dtype=np.dtype("float32"),
         nodata=-9999.0,
         mosaic_method_cls=FirstMethod,
+        resampling=resampling,
+        path_from_href=path_from_href,
     )
 
 
@@ -81,6 +87,8 @@ def _make_da_with_backends(
     width: int = 10,
     height: int = 10,
     affine: Affine | None = None,
+    resampling: ResamplingMethod = ResamplingMethod.NEAREST,
+    path_from_href: Callable[[str], str] | None = None,
 ) -> xr.DataArray:
     """Return a minimal DataArray with stac_cog explain attrs attached."""
     if affine is None:
@@ -94,6 +102,8 @@ def _make_da_with_backends(
         dst_width=width,
         dst_height=height,
         affine=affine,
+        resampling=resampling,
+        path_from_href=path_from_href,
     )
 
     time_coord = np.array(time_coords, dtype="datetime64[D]")
@@ -622,3 +632,61 @@ def test_accessor_explain_query_count_not_multiplied_by_bands(wgs84):
     assert plan.total_chunk_reads == 6
     # but only 2 DuckDB queries (T=2 x S=1), not 6 (B*T*S)
     assert mock_search.call_count == 2
+
+
+def test_accessor_explain_fetch_headers_uses_backend_read_context(wgs84):
+    """fetch_headers=True reuses backend path resolution settings."""
+
+    def path_fn(href: str) -> str:
+        return href.removeprefix("s3://bucket/")
+
+    dates = ["2023-01-01/2023-01-01"]
+    time_coords = [np.datetime64("2023-01-01", "D")]
+    da = _make_da_with_backends(
+        wgs84,
+        dates=dates,
+        time_coords=time_coords,
+        bands=["red"],
+        width=4,
+        height=4,
+        resampling=ResamplingMethod.BILINEAR,
+        path_from_href=path_fn,
+    )
+
+    class _FakeGeoTIFF:
+        def __init__(self) -> None:
+            self.overviews: list[object] = []
+            self.transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
+
+    class _FakeWindow:
+        col_off = 1
+        row_off = 2
+        width = 3
+        height = 4
+
+    async def _fake_open_and_window(item: dict, band: str, ctx: object):
+        assert item["id"] == "item-0"
+        assert band == "red"
+        assert ctx.resampling == ResamplingMethod.NEAREST
+        assert ctx.path_fn is path_fn
+        geotiff = _FakeGeoTIFF()
+        return geotiff, geotiff, _FakeWindow(), "item-0.tif"
+
+    with (
+        patch("rustac.DuckdbClient.search") as mock_search,
+        patch(
+            "lazycogs._explain._open_and_window",
+            new=AsyncMock(side_effect=_fake_open_and_window),
+        ),
+    ):
+        mock_search.return_value = _fake_items("red", 1)
+        plan = da.lazycogs.explain(fetch_headers=True)
+
+    assert mock_search.call_count == 1
+    assert plan.total_chunk_reads == 1
+    assert plan.total_cog_reads == 1
+    read = plan.chunk_reads[0].cog_reads[0]
+    assert read.window_col_off == 1
+    assert read.window_row_off == 2
+    assert read.window_width == 3
+    assert read.window_height == 4

@@ -1,15 +1,62 @@
-"""Private adapter for rust-warp's low-level reprojection API."""
+"""Raster reprojection helpers backed by rust-warp."""
 
 from __future__ import annotations
 
+import functools
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import numpy as np
 import rust_warp
+from pyproj import CRS, Transformer
 
 if TYPE_CHECKING:
     from affine import Affine
-    from pyproj import CRS
+
+
+class ResamplingMethod(StrEnum):
+    """Supported public reprojection resampling methods."""
+
+    NEAREST = "nearest"
+    BILINEAR = "bilinear"
+    CUBIC = "cubic"
+
+
+@functools.lru_cache(maxsize=256)
+def _get_transformer(src_crs: CRS, dst_crs: CRS) -> Transformer:
+    """Return a cached ``Transformer`` for a CRS pair.
+
+    ``Transformer.from_crs`` involves PROJ database lookups and pipeline
+    initialisation. The same (src_crs, dst_crs) pair recurs for every item in a
+    collection, so caching avoids recreating the same object hundreds of times
+    per chunk read.
+
+    Args:
+        src_crs: Source CRS.
+        dst_crs: Destination CRS.
+
+    Returns:
+        A ``Transformer`` that maps ``src_crs`` → ``dst_crs``.
+
+    """
+    return Transformer.from_crs(src_crs, dst_crs, always_xy=True)
+
+
+@dataclass(frozen=True)
+class ReprojectRequest:
+    """All inputs required to reproject one source tile."""
+
+    data: np.ndarray
+    src_transform: Affine
+    src_crs: CRS
+    dst_transform: Affine
+    dst_crs: CRS
+    dst_width: int
+    dst_height: int
+    nodata: float | None = None
+    resampling: ResamplingMethod = ResamplingMethod.NEAREST
+
 
 _SUPPORTED_DTYPES = frozenset(
     {
@@ -22,6 +69,16 @@ _SUPPORTED_DTYPES = frozenset(
     },
 )
 _EXPECTED_ARRAY_NDIM = 3
+
+
+def _same_grid(request: ReprojectRequest) -> bool:
+    """Return ``True`` when reprojection is an exact no-op."""
+    return (
+        request.src_crs.equals(request.dst_crs)
+        and request.src_transform == request.dst_transform
+        and request.data.shape[1] == request.dst_height
+        and request.data.shape[2] == request.dst_width
+    )
 
 
 def _affine_to_rust_warp(
@@ -80,7 +137,7 @@ def _normalize_nodata(nodata: float | None, dtype: np.dtype) -> float | int:
     return np.array([nodata]).astype(dtype, casting="unsafe")[0].item()
 
 
-def reproject_array_rust_warp(
+def reproject_array(
     data: np.ndarray,
     src_transform: Affine,
     src_crs: CRS,
@@ -88,8 +145,8 @@ def reproject_array_rust_warp(
     dst_crs: CRS,
     dst_width: int,
     dst_height: int,
+    resampling: ResamplingMethod,
     nodata: float | None = None,
-    resampling: str = "nearest",
 ) -> np.ndarray:
     """Reproject a ``(bands, y, x)`` array via rust-warp's 2D kernel.
 
@@ -101,8 +158,8 @@ def reproject_array_rust_warp(
         dst_crs: CRS of the destination grid.
         dst_width: Destination width in pixels.
         dst_height: Destination height in pixels.
+        resampling: rust-warp resampling method.
         nodata: Fill value for pixels outside the source extent.
-        resampling: rust-warp resampling method name.
 
     Returns:
         Reprojected array with shape ``(bands, dst_height, dst_width)``.
@@ -139,3 +196,21 @@ def reproject_array_rust_warp(
         for band in data
     ]
     return np.stack(reprojected_bands, axis=0)
+
+
+def reproject_tile(request: ReprojectRequest) -> np.ndarray:
+    """Reproject one ``(bands, y, x)`` source tile onto a destination grid."""
+    if _same_grid(request):
+        return request.data
+
+    return reproject_array(
+        data=request.data,
+        src_transform=request.src_transform,
+        src_crs=request.src_crs,
+        dst_transform=request.dst_transform,
+        dst_crs=request.dst_crs,
+        dst_width=request.dst_width,
+        dst_height=request.dst_height,
+        nodata=request.nodata,
+        resampling=request.resampling,
+    )

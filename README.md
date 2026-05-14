@@ -24,7 +24,7 @@ One constraint worth naming: lazycogs only reads Cloud Optimized GeoTIFFs. If yo
 | STAC search + spatial indexing | `rustac` (DuckDB + geoparquet) |
 | COG I/O | `async-geotiff` (Rust, no GDAL) |
 | Cloud storage | `obstore` |
-| Reprojection | backend-neutral seam in `lazycogs`; all public resampling methods currently route through `rust-warp` |
+| Reprojection | `rust-warp` via `lazycogs.ResamplingMethod` |
 | Lazy dataset construction | xarray `BackendEntrypoint` + `LazilyIndexedArray` |
 
 ## Installation
@@ -33,7 +33,7 @@ One constraint worth naming: lazycogs only reads Cloud Optimized GeoTIFFs. If yo
 pip install lazycogs
 ```
 
-Current development work also pins `rust-warp` from GitHub via uv while the reprojection migration is in progress.
+`rust-warp` is currently pinned from GitHub via uv pending a stable release flow for this dependency.
 
 ## Coordinate convention
 
@@ -75,11 +75,10 @@ da = lazycogs.open(
     bbox=dst_bbox,
     crs=dst_crs,
     resolution=10.0,
-    resampling="nearest",  # also supports "bilinear" and "cubic"
+    resampling=lazycogs.ResamplingMethod.NEAREST,
 )
 
-# Or use the enum if you prefer:
-# lazycogs.open(..., resampling=lazycogs.ResamplingMethod.CUBIC)
+# Other supported modes: ResamplingMethod.BILINEAR and ResamplingMethod.CUBIC
 ```
 
 ### Async loading

@@ -10,13 +10,14 @@ from affine import Affine
 from pyproj import CRS
 
 from lazycogs._chunk_reader import (
-    _apply_bands_with_warp_cache,
     _drain_in_order,
     _native_window,
+    _reproject_bands,
     _select_overview,
     read_chunk_async,
 )
 from lazycogs._mosaic_methods import FirstMethod
+from lazycogs._warp import ResamplingMethod
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -262,7 +263,7 @@ def test_drain_in_order_early_exit_on_is_done():
 
 
 # ---------------------------------------------------------------------------
-# _apply_bands_with_warp_cache
+# _reproject_bands
 # ---------------------------------------------------------------------------
 
 
@@ -273,156 +274,26 @@ def _make_raster(transform: Affine, value: float, h: int = 4, w: int = 4) -> Mag
     return raster
 
 
-def test_apply_bands_with_warp_cache_same_grid_bypasses_reproject_tile():
-    """Same-grid reads return directly without invoking the reprojection backend."""
+def test_reproject_bands_same_grid_returns_original_array():
+    """Same-grid reads return the original array through ``reproject_tile``."""
     crs = CRS.from_epsg(4326)
     transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
     raster = _make_raster(transform, 1.0)
 
-    with patch("lazycogs._chunk_reader.reproject_tile") as reproject_tile_mock:
-        results = _apply_bands_with_warp_cache(
-            [("B01", raster, crs, None)],
-            transform,
-            crs,
-            dst_width=4,
-            dst_height=4,
-            resampling="cubic",
-        )
+    results = _reproject_bands(
+        [("B01", raster, crs, None)],
+        transform,
+        crs,
+        dst_width=4,
+        dst_height=4,
+        resampling=ResamplingMethod.CUBIC,
+    )
 
-    reproject_tile_mock.assert_not_called()
-    np.testing.assert_array_equal(results["B01"][0], raster.data)
+    assert results["B01"][0] is raster.data
 
 
-def test_apply_bands_with_warp_cache_shared_geometry():
-    """Bands with the same transform/CRS share a single warp map computation."""
-    crs = CRS.from_epsg(4326)
-    # Offset the source transform slightly so it differs from dst_transform and
-    # the warp path (rather than the identity fast-path) is exercised.
-    transform = Affine(1.0, 0.0, 0.5, 0.0, -1.0, 4.0)
-    dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
-
-    raster_a = _make_raster(transform, 1.0)
-    raster_b = _make_raster(transform, 2.0)
-
-    warp_map_calls = []
-    from lazycogs._reproject import compute_warp_map as real_compute_warp_map
-
-    def _spy_compute_warp_map(*args, **kwargs):
-        result = real_compute_warp_map(*args, **kwargs)
-        warp_map_calls.append(True)
-        return result
-
-    with (
-        patch("lazycogs._reproject._DEFAULT_REPROJECT_BACKEND", "legacy"),
-        patch(
-            "lazycogs._reproject.compute_warp_map",
-            side_effect=_spy_compute_warp_map,
-        ),
-    ):
-        results = _apply_bands_with_warp_cache(
-            [("B01", raster_a, crs, None), ("B02", raster_b, crs, None)],
-            dst_transform,
-            crs,
-            dst_width=4,
-            dst_height=4,
-        )
-
-    # Same transform → warp map computed exactly once.
-    assert len(warp_map_calls) == 1
-    assert set(results) == {"B01", "B02"}
-    np.testing.assert_array_equal(results["B01"][0], 1.0)
-    np.testing.assert_array_equal(results["B02"][0], 2.0)
-
-
-def test_apply_bands_with_warp_cache_different_geometry():
-    """Bands with different transforms each compute their own warp map."""
-    crs = CRS.from_epsg(4326)
-    # Both source transforms differ from dst_transform so the warp path is
-    # exercised for each band (fast-path is not triggered).
-    transform_a = Affine(1.0, 0.0, 0.5, 0.0, -1.0, 4.0)
-    transform_b = Affine(2.0, 0.0, 0.0, 0.0, -2.0, 8.0)
-    dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
-
-    raster_a = _make_raster(transform_a, 1.0)
-    raster_b = _make_raster(transform_b, 2.0, h=2, w=2)
-
-    warp_map_calls = []
-    from lazycogs._reproject import compute_warp_map as real_compute_warp_map
-
-    def _spy_compute_warp_map(*args, **kwargs):
-        result = real_compute_warp_map(*args, **kwargs)
-        warp_map_calls.append(True)
-        return result
-
-    with (
-        patch("lazycogs._reproject._DEFAULT_REPROJECT_BACKEND", "legacy"),
-        patch(
-            "lazycogs._reproject.compute_warp_map",
-            side_effect=_spy_compute_warp_map,
-        ),
-    ):
-        results = _apply_bands_with_warp_cache(
-            [("B01", raster_a, crs, None), ("B02", raster_b, crs, None)],
-            dst_transform,
-            crs,
-            dst_width=4,
-            dst_height=4,
-        )
-
-    # Different transforms → two separate warp map computations.
-    assert len(warp_map_calls) == 2
-    assert set(results) == {"B01", "B02"}
-
-
-def test_apply_bands_with_warp_cache_shared_across_calls():
-    """A shared cache reuses warp maps across separate calls (e.g. time steps)."""
-    crs = CRS.from_epsg(4326)
-    # Source transform offset from dst so the warp path is exercised.
-    transform = Affine(1.0, 0.0, 0.5, 0.0, -1.0, 4.0)
-    dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
-
-    raster = _make_raster(transform, 1.0)
-    shared_cache: dict = {}
-
-    warp_map_calls = []
-    from lazycogs._reproject import compute_warp_map as real_compute_warp_map
-
-    def _spy_compute_warp_map(*args, **kwargs):
-        result = real_compute_warp_map(*args, **kwargs)
-        warp_map_calls.append(True)
-        return result
-
-    with (
-        patch("lazycogs._reproject._DEFAULT_REPROJECT_BACKEND", "legacy"),
-        patch(
-            "lazycogs._reproject.compute_warp_map",
-            side_effect=_spy_compute_warp_map,
-        ),
-    ):
-        _apply_bands_with_warp_cache(
-            [("B01", raster, crs, None)],
-            dst_transform,
-            crs,
-            dst_width=4,
-            dst_height=4,
-            warp_cache=shared_cache,
-        )
-        _apply_bands_with_warp_cache(
-            [("B01", raster, crs, None)],
-            dst_transform,
-            crs,
-            dst_width=4,
-            dst_height=4,
-            warp_cache=shared_cache,
-        )
-
-    # Warp map computed only once despite two separate calls.
-    assert len(warp_map_calls) == 1
-    assert len(shared_cache) == 1
-
-
-def test_apply_bands_with_warp_cache_uses_rust_backend_for_nearest_by_default():
-    """The chunk-reader seam now defaults all reprojection methods to rust-warp."""
+def test_reproject_bands_forwards_resampling_to_rust_backend():
+    """Non-trivial reprojection forwards the enum unchanged to rust-warp."""
     crs = CRS.from_epsg(4326)
     src_transform = Affine(1.0, 0.0, 0.5, 0.0, -1.0, 4.0)
     dst_transform = Affine(1.0, 0.0, 0.0, 0.0, -1.0, 4.0)
@@ -430,20 +301,20 @@ def test_apply_bands_with_warp_cache_uses_rust_backend_for_nearest_by_default():
     expected = np.full((1, 4, 4), 7.0, dtype=np.float32)
 
     with patch(
-        "lazycogs._reproject.reproject_array_rust_warp",
+        "lazycogs._warp.reproject_array",
         return_value=expected,
     ) as rust_backend_mock:
-        results = _apply_bands_with_warp_cache(
+        results = _reproject_bands(
             [("B01", raster, crs, None)],
             dst_transform,
             crs,
             dst_width=4,
             dst_height=4,
-            resampling="nearest",
+            resampling=ResamplingMethod.NEAREST,
         )
 
     rust_backend_mock.assert_called_once()
-    assert rust_backend_mock.call_args.kwargs["resampling"] == "nearest"
+    assert rust_backend_mock.call_args.kwargs["resampling"] is ResamplingMethod.NEAREST
     np.testing.assert_array_equal(results["B01"][0], expected)
 
 

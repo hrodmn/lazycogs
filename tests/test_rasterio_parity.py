@@ -15,13 +15,13 @@ from async_geotiff import GeoTIFF
 from pyproj import CRS
 
 from lazycogs._chunk_reader import _native_window, _select_overview
-from lazycogs._reproject import (
+from lazycogs._store import resolve
+from lazycogs._warp import (
     ReprojectRequest,
     ResamplingMethod,
     _get_transformer,
     reproject_tile,
 )
-from lazycogs._store import resolve
 
 _NEAREST_RESOLUTIONS = [
     10,
@@ -72,7 +72,6 @@ async def _read_lazycogs(
     dst_crs: CRS,
     *,
     resampling: ResamplingMethod = ResamplingMethod.NEAREST,
-    backend: str | None = None,
 ) -> np.ndarray:
     """Run the lazycogs tile read + reprojection path for one chunk."""
     store, path = resolve(href)
@@ -123,7 +122,6 @@ async def _read_lazycogs(
             nodata=geotiff.nodata,
             resampling=resampling,
         ),
-        backend=backend,
     )
 
 
@@ -287,73 +285,6 @@ def test_parity_cross_crs(synthetic_cog: Path, resolution: int) -> None:
         lc_out,
         rio_out,
         f"cross_crs res={resolution}m",
-        max_differing_pixels=3,
-        max_abs_diff=2048 * 16 + 1,
-    )
-
-
-@pytest.mark.parametrize("resolution", [20, 60, 160])
-def test_nearest_legacy_matches_rust_warp_same_crs(
-    synthetic_cog: Path,
-    resolution: int,
-) -> None:
-    """Migration-window A/B checks keep nearest same-CRS behavior aligned."""
-    dst_crs = CRS.from_epsg(32632)
-    affine = _chunk_affine(float(resolution), _CENTER_UTM_X, _CENTER_UTM_Y)
-
-    legacy_out = asyncio.run(
-        _read_lazycogs(
-            _href(synthetic_cog),
-            affine,
-            dst_crs,
-            backend="legacy",
-        ),
-    )
-    rust_out = asyncio.run(
-        _read_lazycogs(
-            _href(synthetic_cog),
-            affine,
-            dst_crs,
-            backend="rust-warp",
-        ),
-    )
-
-    np.testing.assert_array_equal(rust_out, legacy_out)
-
-
-@pytest.mark.parametrize("resolution", [20, 60, 160])
-def test_nearest_legacy_matches_rust_warp_cross_crs(
-    synthetic_cog: Path,
-    resolution: int,
-) -> None:
-    """Migration-window A/B checks keep nearest cross-CRS behavior aligned."""
-    src_crs = CRS.from_epsg(32632)
-    dst_crs = CRS.from_epsg(3035)
-    t = _get_transformer(src_crs, dst_crs)
-    cx_laea, cy_laea = t.transform(_CENTER_UTM_X, _CENTER_UTM_Y)
-    affine = _chunk_affine(float(resolution), cx_laea, cy_laea)
-
-    legacy_out = asyncio.run(
-        _read_lazycogs(
-            _href(synthetic_cog),
-            affine,
-            dst_crs,
-            backend="legacy",
-        ),
-    )
-    rust_out = asyncio.run(
-        _read_lazycogs(
-            _href(synthetic_cog),
-            affine,
-            dst_crs,
-            backend="rust-warp",
-        ),
-    )
-
-    _assert_parity(
-        rust_out,
-        legacy_out,
-        f"legacy_vs_rust cross_crs res={resolution}m",
         max_differing_pixels=3,
         max_abs_diff=2048 * 16 + 1,
     )

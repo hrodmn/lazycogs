@@ -11,7 +11,6 @@ import rustac
 from pyproj import Transformer
 
 import lazycogs
-from lazycogs import _reproject
 
 logging.basicConfig(level="WARN")
 logging.getLogger("lazycogs").setLevel("DEBUG")
@@ -81,30 +80,13 @@ def measure(label: str):
     )
 
 
-@contextlib.contextmanager
-def _reproject_backend(backend: str):
-    """Temporarily force the internal reprojection backend for this script."""
-    previous_backend = _reproject._DEFAULT_REPROJECT_BACKEND
-    _reproject._DEFAULT_REPROJECT_BACKEND = backend
-    try:
-        yield
-    finally:
-        _reproject._DEFAULT_REPROJECT_BACKEND = previous_backend
-
-
 def _parse_args() -> argparse.Namespace:
     """Parse command-line options for the integration script."""
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--reproject-backend",
-        choices=["legacy", "rust-warp"],
-        default="legacy",
-        help="Internal reprojection backend to exercise during the run.",
-    )
     return parser.parse_args()
 
 
-async def run(reproject_backend: str):
+async def run():
     dst_crs = "epsg:5070"
     dst_bbox = (-700_000, 2_220_000, 600_000, 2_930_000)
 
@@ -135,33 +117,30 @@ async def run(reproject_backend: str):
             limit=limit,
         )
 
-    # --- daily time steps ---
-    with _reproject_backend(reproject_backend):
-        logger.warning("using reprojection backend: %s", reproject_backend)
-        store = lazycogs.store_for(str(items_parquet), skip_signature=True)
-        da = lazycogs.open(
-            str(items_parquet),
-            crs=dst_crs,
-            bbox=dst_bbox,
-            resolution=100,
-            time_period="P1D",
-            bands=["red", "green", "blue"],
-            dtype="int16",
-            store=store,
-        )
-        logger.warning("daily array: %s", da)
+    store = lazycogs.store_for(str(items_parquet), skip_signature=True)
+    da = lazycogs.open(
+        str(items_parquet),
+        crs=dst_crs,
+        bbox=dst_bbox,
+        resolution=100,
+        time_period="P1D",
+        bands=["red", "green", "blue"],
+        dtype="int16",
+        store=store,
+    )
+    logger.warning("daily array: %s", da)
 
-        with measure("daily point"):
-            _ = da.sel(x=299965, y=2653947, method="nearest").compute()
+    with measure("daily point"):
+        _ = da.sel(x=299965, y=2653947, method="nearest").compute()
 
-        subset = da.sel(
-            x=slice(100_000, 400_000),
-            y=slice(2_800_000, 2_600_000),
-        )
-        with measure("daily spatial subset isel(time=1)"):
-            _ = subset.isel(time=1).load()
+    subset = da.sel(
+        x=slice(100_000, 400_000),
+        y=slice(2_800_000, 2_600_000),
+    )
+    with measure("daily spatial subset isel(time=1)"):
+        _ = subset.isel(time=1).load()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    asyncio.run(run(args.reproject_backend))
+    asyncio.run(run())

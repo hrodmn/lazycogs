@@ -21,8 +21,8 @@ from lazycogs._mosaic_methods import (
     MosaicMethodBase,
     StdevMethod,
 )
-from lazycogs._reproject import ResamplingMethod
 from lazycogs._store import store_for
+from lazycogs._warp import ResamplingMethod
 
 __all__ = [
     "DEFAULT_RESAMPLING",

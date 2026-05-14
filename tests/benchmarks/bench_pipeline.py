@@ -18,7 +18,7 @@ from pyproj import CRS
 
 import lazycogs
 from lazycogs import FirstMethod, MedianMethod, MosaicMethodBase, set_reproject_workers
-from lazycogs._reproject import ReprojectRequest, ResamplingMethod, reproject_tile
+from lazycogs._warp import ReprojectRequest, ResamplingMethod, reproject_tile
 
 from .conftest import (
     BENCHMARK_BBOX,
@@ -72,12 +72,11 @@ def _benchmark_request(
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("backend", ["legacy", "rust-warp"])
-def test_small_window_nearest_backend_comparison(benchmark, backend: str) -> None:
-    """Compare legacy vs rust-warp on the same representative small window."""
+def test_small_window_nearest_reprojection(benchmark) -> None:
+    """Benchmark the representative nearest-neighbor rust-warp path."""
     request = _benchmark_request(dst_resolution=20.0)
 
-    benchmark(reproject_tile, request, backend=backend)
+    benchmark(reproject_tile, request)
 
 
 @pytest.mark.benchmark
@@ -131,7 +130,6 @@ def test_small_window_reprojection_modes(
             nodata=reproject_request.nodata,
             resampling=resampling,
         ),
-        backend="rust-warp",
     )
 
 
@@ -315,8 +313,8 @@ def test_band_access_pattern(
     """Compare single-band vs multi-band compute cost.
 
     Uses the expanded 12-time-step dataset with ``chunks={"time": 1}`` so each
-    time step is a concurrent dask task.  Multi-band reads share a single
-    ``rustac.search_sync`` query and reuse reprojection warp maps across bands;
+    time step is a concurrent dask task. Multi-band reads share a single
+    ``rustac.search_sync`` query and reproject all requested bands in one pass;
     this benchmark quantifies that gain under concurrent load.
     """
 

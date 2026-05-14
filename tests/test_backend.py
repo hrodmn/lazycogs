@@ -12,6 +12,7 @@ from xarray.core import indexing
 
 from lazycogs._backend import MultiBandStacBackendArray
 from lazycogs._mosaic_methods import FirstMethod
+from lazycogs._warp import ResamplingMethod
 
 
 @pytest.fixture
@@ -242,7 +243,7 @@ def test_multiband_raw_getitem_forwards_resampling(wgs84):
     """The selected resampling mode reaches read_chunk_async unchanged."""
     bands = ["B01", "B02"]
     multi = _make_multiband_array(wgs84, bands)
-    multi.resampling = "cubic"
+    multi.resampling = ResamplingMethod.CUBIC
     fake_items = [
         {"id": "item-1", "assets": {b: {"href": f"s3://b/{b}.tif"} for b in bands}},
     ]
@@ -258,7 +259,9 @@ def test_multiband_raw_getitem_forwards_resampling(wgs84):
     ):
         multi._sync_getitem((slice(0, 2), 0, slice(0, 1), slice(0, 4)))
 
-    assert read_chunk_async_mock.await_args.kwargs["resampling"] == "cubic"
+    assert (
+        read_chunk_async_mock.await_args.kwargs["resampling"] is ResamplingMethod.CUBIC
+    )
 
 
 def test_multiband_raw_getitem_squeeze_band(wgs84):

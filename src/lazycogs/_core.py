@@ -17,9 +17,9 @@ from lazycogs._backend import MultiBandStacBackendArray
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
 from lazycogs._grid import compute_output_grid
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
-from lazycogs._reproject import ResamplingMethod
 from lazycogs._store import resolve
 from lazycogs._temporal import _TemporalGrouper, grouper_from_period
+from lazycogs._warp import ResamplingMethod
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -255,26 +255,28 @@ def _build_time_steps(
     return filter_strings, time_coords
 
 
-def _validate_resampling(resampling: str | ResamplingMethod) -> ResamplingMethod:
-    """Return ``resampling`` as a supported enum, else raise ``ValueError``.
+def _validate_resampling(resampling: ResamplingMethod) -> ResamplingMethod:
+    """Return ``resampling`` when it is a supported enum value.
 
     Args:
-        resampling: User-provided resampling method name.
+        resampling: User-provided resampling enum value.
 
     Returns:
         Normalized resampling enum value.
 
     Raises:
-        ValueError: If *resampling* is not currently supported.
+        TypeError: If *resampling* is not a ``ResamplingMethod`` value.
 
     """
-    try:
-        return ResamplingMethod(resampling)
-    except ValueError as exc:
-        supported = ", ".join(SUPPORTED_RESAMPLING)
-        raise ValueError(
-            f"Unsupported resampling {resampling!r}. Supported values: {supported}.",
-        ) from exc
+    if isinstance(resampling, ResamplingMethod):
+        return resampling
+
+    supported = ", ".join(SUPPORTED_RESAMPLING)
+    raise TypeError(
+        "resampling must be a ResamplingMethod value. "
+        f"Got {type(resampling).__name__!r}: {resampling!r}. "
+        f"Supported values: {supported}.",
+    )
 
 
 def _build_dataarray(
@@ -302,8 +304,7 @@ def _build_dataarray(
 ) -> DataArray:
     """Assemble the lazy DataArray from pre-computed parameters.
 
-    This is the shared implementation used by both :func:`open` and
-    the STAC search completes.
+    Internal helper used by :func:`open` after the STAC search completes.
 
     Args:
         parquet_path: Path to a geoparquet file or hive-partitioned directory.
@@ -468,7 +469,7 @@ def open(  # noqa: A001
     nodata: float | None = None,
     dtype: str | np.dtype | None = None,
     mosaic_method: type[MosaicMethodBase] | None = None,
-    resampling: str | ResamplingMethod = DEFAULT_RESAMPLING,
+    resampling: ResamplingMethod = DEFAULT_RESAMPLING,
     time_period: str = "P1D",
     store: ObjectStore | None = None,
     max_concurrent_reads: int = 32,
@@ -507,9 +508,10 @@ def open(  # noqa: A001
         mosaic_method: Mosaic method class (not instance) to use.  Defaults
             to :class:`~lazycogs._mosaic_methods.FirstMethod`.
         resampling: Reprojection resampling method. Supported values are
-            ``"nearest"`` (default), ``"bilinear"``, and ``"cubic"``.
-            Validation happens at open time so unsupported values fail before
-            any chunk reads begin.
+            :attr:`~lazycogs.ResamplingMethod.NEAREST` (default),
+            :attr:`~lazycogs.ResamplingMethod.BILINEAR`, and
+            :attr:`~lazycogs.ResamplingMethod.CUBIC`. Validation happens at
+            open time so unsupported values fail before any chunk reads begin.
         time_period: ISO 8601 duration string controlling how items are
             grouped into time steps.  Supported forms: ``PnD`` (days),
             ``P1W`` (ISO calendar week), ``P1M`` (calendar month), ``P1Y``

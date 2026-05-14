@@ -18,8 +18,8 @@ from lazycogs._core import (
     _build_time_steps,
     _smoketest_store,
 )
-from lazycogs._reproject import ResamplingMethod
 from lazycogs._temporal import _DayGrouper, _FixedDayGrouper, _MonthGrouper
+from lazycogs._warp import ResamplingMethod
 
 
 def _items_to_arrow(items: list[dict]) -> rustac.DuckdbClient:
@@ -320,9 +320,9 @@ def test_open_accepts_resampling_enum(tmp_path):
     assert da.attrs["_stac_backend"].resampling is ResamplingMethod.CUBIC
 
 
-def test_open_rejects_unknown_resampling():
-    """open() validates resampling once at API entry."""
-    with pytest.raises(ValueError, match="Unsupported resampling"):
+def test_open_rejects_string_resampling():
+    """open() requires the public resampling enum at API entry."""
+    with pytest.raises(TypeError, match="resampling must be a ResamplingMethod"):
         lazycogs.open(
             "items.parquet",
             bbox=(-93.5, 44.5, -93.0, 45.0),
