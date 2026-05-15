@@ -2,86 +2,86 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://developmentseed.org/lazycogs/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/CONTRIBUTING/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/architecture/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/performance/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/api/mosaic/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/api/open/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/api/utils/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/guides/chunking/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/guides/cloud-storage/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/guides/mosaic-methods/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/guides/stac-search/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/guides/temporal-grouping/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/async-workflow/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/cmr-lpcloud-fix-assets/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/demo_midwest_daily/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/demo_southwest_monthly/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/explain/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/hls-https/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/hls-s3/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/lazycogs-odc-stac/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
     <url>
          <loc>https://developmentseed.org/lazycogs/notebooks/quickstart/</loc>
-         <lastmod>2026-05-13</lastmod>
+         <lastmod>2026-05-15</lastmod>
     </url>
 </urlset>

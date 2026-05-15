@@ -1680,7 +1680,7 @@
 <li>Calls <code>_build_time_steps()</code>: queries the parquet source via <code>duckdb_client.search_to_arrow(...)</code> to obtain an Arrow table containing only the <code>datetime</code> and <code>start_datetime</code> columns (plus any filter/sort fields). Extracts timestamps from the Arrow columns without Python-level dict walking, buckets them with the <code>_TemporalGrouper</code>, deduplicates, and returns sorted <code>(filter_strings, time_coords)</code> pairs. Only groups with at least one item produce a time step.</li>
 <li>Calls <code>compute_output_grid()</code> to get the output affine transform and dimensions (width, height). No eager coordinate arrays are produced.</li>
 <li>Creates a single <code>MultiBandStacBackendArray</code> (a dataclass) with shape <code>(band, time, y, x)</code> holding all the parameters needed to materialise any chunk later, then wraps it in one <code>xarray.core.indexing.LazilyIndexedArray</code>. This avoids <code>xr.concat</code> (used internally by <code>ds.to_array()</code>), which would eagerly load <code>LazilyIndexedArray</code>-backed objects.</li>
-<li>Uses <code>rasterix.RasterIndex</code> to define the x/y coordinates (lazily).</li>
+<li>Uses <code>rasterix.RasterIndex</code> for spatial indexing, but materialises the x/y coordinate variables eagerly as numpy arrays so chunked scalar spatial selections compute reliably.</li>
 <li>Constructs the <code>xr.DataArray</code> directly from the 4-D variable. If <code>chunks</code> is provided, calls <code>.chunk(chunks)</code> to convert to a dask-backed array; otherwise the <code>LazilyIndexedArray</code> remains in play so narrow slices (e.g. a single pixel) translate to minimal I/O.</li>
 <li>Stores <code>_stac_backend</code> (the <code>MultiBandStacBackendArray</code> instance) and <code>_stac_time_coords</code> (the full time coordinate array) in <code>da.attrs</code> so that <code>da.lazycogs.explain()</code> can reconstruct the explain plan without re-specifying <code>open()</code> parameters.</li>
 </ol>
@@ -1722,7 +1722,7 @@
 <li>x-coordinates and y-coordinates as 1-D arrays of pixel-centre values, with y descending (north to south) to match the standard raster convention used by GDAL, <code>odc-stac</code>, and <code>rioxarray</code>.</li>
 </ul>
 <p>The y coordinates are derived directly from the affine transform: <code>y[i] = f + e * (0.5 + i)</code>. Because <code>e &lt; 0</code>, <code>y[0]</code> is the northernmost pixel centre and the array is strictly decreasing. Spatial selection uses <code>sel(y=slice(north, south))</code> (high to low).</p>
-<p>A <code>rasterix.RasterIndex</code> is attached to every DataArray returned by <code>open()</code>. The index replaces explicit x/y coordinate arrays with lazy coordinate generation from the affine transform, provides CRS discoverability via <code>da.proj.crs</code>, and enables spatial alignment with other RasterIndex-backed arrays.</p>
+<p>A <code>rasterix.RasterIndex</code> is attached to every DataArray returned by <code>open()</code>. The index provides CRS discoverability via <code>da.proj.crs</code> and enables spatial alignment with other RasterIndex-backed arrays. The x/y coordinate variables themselves are still materialised eagerly from that index so operations like <code>da.chunk(...).sel(x=..., y=..., method="nearest").compute()</code> keep scalar spatial coordinates as true scalars instead of length-1 arrays.</p>
 <h2 id="per-chunk-read-and-resample-pipeline">Per-chunk read and resample pipeline<a class="headerlink" href="#per-chunk-read-and-resample-pipeline" title="Permanent link">&para;</a></h2>
 <p>Each call to <code>_read_item_band()</code> in <code>_chunk_reader.py</code> follows a four-step pipeline to turn a remote COG into a correctly-sized, correctly-projected numpy array for one destination chunk.</p>
 <h3 id="1-overview-selection">1. Overview selection<a class="headerlink" href="#1-overview-selection" title="Permanent link">&para;</a></h3>
@@ -1902,7 +1902,7 @@ mean that requires all weeks to be present before reducing).</p>
 </tr>
 <tr>
 <td><code>rasterix</code></td>
-<td>CRS-aware <code>RasterIndex</code> for lazy spatial coordinates</td>
+<td>CRS-aware <code>RasterIndex</code> for spatial indexing and coordinate metadata</td>
 </tr>
 <tr>
 <td><code>xproj</code></td>
