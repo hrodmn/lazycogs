@@ -1,6 +1,6 @@
 [project]
 name = "lazycogs"
-version = "0.3.0"
+version = "0.3.1"
 description = "Lazily load COG assets from STAC items into xarray DataArrays using async-geotiff"
 readme = "README.md"
 license = {file = "LICENSE"}

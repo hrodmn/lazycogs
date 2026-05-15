@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/developmentseed/lazycogs/compare/v0.3.0...v0.3.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* eagerly load spatial coords to avoid mismatch in sel operations ([#57](https://github.com/developmentseed/lazycogs/issues/57)) ([1f66381](https://github.com/developmentseed/lazycogs/commit/1f66381582b13a73084fbe24f35709aecfc8ee3e))
+
 ## [0.3.0](https://github.com/developmentseed/lazycogs/compare/v0.2.0...v0.3.0) (2026-05-07)
 
 
