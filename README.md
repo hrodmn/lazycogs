@@ -43,6 +43,10 @@ GDAL.
 
 Use ``sel(y=slice(north, south))`` (high to low) for spatial subsetting.
 
+`x` and `y` keep their `RasterIndex`-based spatial selection behavior, but the
+coordinate variables themselves are materialized eagerly so chunked nearest-neighbor
+spatial selections compute cleanly.
+
 ## Example
 
 ```python

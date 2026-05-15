@@ -49,7 +49,7 @@ src/lazycogs/
 6. Calls `_build_time_steps()`: queries the parquet source via `duckdb_client.search_to_arrow(...)` to obtain an Arrow table containing only the `datetime` and `start_datetime` columns (plus any filter/sort fields). Extracts timestamps from the Arrow columns without Python-level dict walking, buckets them with the `_TemporalGrouper`, deduplicates, and returns sorted `(filter_strings, time_coords)` pairs. Only groups with at least one item produce a time step.
 7. Calls `compute_output_grid()` to get the output affine transform and dimensions (width, height). No eager coordinate arrays are produced.
 8. Creates a single `MultiBandStacBackendArray` (a dataclass) with shape `(band, time, y, x)` holding all the parameters needed to materialise any chunk later, then wraps it in one `xarray.core.indexing.LazilyIndexedArray`. This avoids `xr.concat` (used internally by `ds.to_array()`), which would eagerly load `LazilyIndexedArray`-backed objects.
-9. Uses `rasterix.RasterIndex` to define the x/y coordinates (lazily).
+9. Uses `rasterix.RasterIndex` for spatial indexing, but materialises the x/y coordinate variables eagerly as numpy arrays so chunked scalar spatial selections compute reliably.
 10. Constructs the `xr.DataArray` directly from the 4-D variable. If `chunks` is provided, calls `.chunk(chunks)` to convert to a dask-backed array; otherwise the `LazilyIndexedArray` remains in play so narrow slices (e.g. a single pixel) translate to minimal I/O.
 11. Stores `_stac_backend` (the `MultiBandStacBackendArray` instance) and `_stac_time_coords` (the full time coordinate array) in `da.attrs` so that `da.lazycogs.explain()` can reconstruct the explain plan without re-specifying `open()` parameters.
 
@@ -101,7 +101,7 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 
 The y coordinates are derived directly from the affine transform: `y[i] = f + e * (0.5 + i)`. Because `e < 0`, `y[0]` is the northernmost pixel centre and the array is strictly decreasing. Spatial selection uses `sel(y=slice(north, south))` (high to low).
 
-A `rasterix.RasterIndex` is attached to every DataArray returned by `open()`. The index replaces explicit x/y coordinate arrays with lazy coordinate generation from the affine transform, provides CRS discoverability via `da.proj.crs`, and enables spatial alignment with other RasterIndex-backed arrays.
+A `rasterix.RasterIndex` is attached to every DataArray returned by `open()`. The index provides CRS discoverability via `da.proj.crs` and enables spatial alignment with other RasterIndex-backed arrays. The x/y coordinate variables themselves are still materialised eagerly from that index so operations like `da.chunk(...).sel(x=..., y=..., method="nearest").compute()` keep scalar spatial coordinates as true scalars instead of length-1 arrays.
 
 ## Per-chunk read and resample pipeline
 
@@ -266,7 +266,7 @@ When the store root does not align with the URL structure of the asset HREFs —
 | `obstore` | Cloud object store abstraction layer for async-geotiff |
 | `pyproj` | CRS transforms: bbox reprojection, warp map generation |
 | `xarray` | DataArray / Dataset assembly, `BackendArray` / `LazilyIndexedArray` protocol |
-| `rasterix` | CRS-aware `RasterIndex` for lazy spatial coordinates |
+| `rasterix` | CRS-aware `RasterIndex` for spatial indexing and coordinate metadata |
 | `xproj` | CRS accessor and alignment for xarray Flexible Indexes |
 | `dask` | Parallel chunk execution |
 | `affine` | Affine transform arithmetic |
