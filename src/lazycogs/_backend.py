@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from async_tiff import ObspecInput
     from rustac import DuckdbClient
 
     from lazycogs._mosaic_methods import MosaicMethodBase
@@ -61,7 +62,8 @@ class _ChunkReadPlan:
         chunk_height: Chunk height in pixels.
         nodata: No-data fill value, or ``None``.
         mosaic_method_cls: Mosaic method class, or ``None`` for the default.
-        store: Pre-configured obstore ``ObjectStore`` instance, or ``None``.
+        store: Pre-configured obspec-compatible store accepted by
+            ``GeoTIFF.open``, or ``None``.
         max_concurrent_reads: Maximum concurrent COG reads per chunk.
         warp_cache: Shared warp map cache across time steps.
         path_fn: Optional callable extracting an object path from an asset HREF.
@@ -83,7 +85,7 @@ class _ChunkReadPlan:
     chunk_height: int
     nodata: float | None
     mosaic_method_cls: type[MosaicMethodBase] | None
-    store: Any | None
+    store: ObspecInput | None
     max_concurrent_reads: int
     warp_cache: dict
     path_fn: Callable[[str], str] | None
@@ -335,10 +337,10 @@ class MultiBandStacBackendArray(BackendArray):
         mosaic_method_cls: Mosaic method class instantiated per chunk, or
             ``None`` to use the default
             :class:`~lazycogs._mosaic_methods.FirstMethod`.
-        store: Pre-configured obstore ``ObjectStore`` instance shared across
-            all chunk reads.  When ``None``, each asset HREF is resolved to a
-            store via the thread-local cache in
-            :func:`~lazycogs._store.resolve`.
+        store: Pre-configured obspec-compatible store accepted by
+            ``GeoTIFF.open`` and shared across all chunk reads. When ``None``,
+            each asset HREF is resolved to an obstore-backed store via the
+            thread-local cache in :func:`~lazycogs._store.resolve`.
         max_concurrent_reads: Maximum number of COG reads to run concurrently
             per chunk.  Limits peak in-flight memory when a chunk overlaps
             many items.  Defaults to 32.
@@ -369,7 +371,7 @@ class MultiBandStacBackendArray(BackendArray):
     dtype: np.dtype
     nodata: float | None
     mosaic_method_cls: type[MosaicMethodBase] | None = field(default=None)
-    store: Any | None = field(default=None)
+    store: ObspecInput | None = field(default=None)
     max_concurrent_reads: int = field(default=32)
     path_from_href: Callable[[str], str] | None = field(default=None)
     shape: tuple[int, ...] = field(init=False)

@@ -13,7 +13,7 @@ Open a lazy `(band, time, y, x)` xarray DataArray from thousands of cloud-optimi
 
 [stackstac](https://stackstac.readthedocs.io) and [odc-stac](https://odc-stac.readthedocs.io) established the pattern that lazycogs builds on: take a STAC item collection and expose it as a spatially-aligned xarray DataArray ready for dask-parallel computation. Both are excellent tools that cover most satellite imagery workflows well. They rely on the trusty combination of rasterio and GDAL for data i/o and warping operations.
 
-lazycogs takes the same approach but replaces GDAL and rasterio with a Rust-native stack: [rustac](https://stac-utils.github.io/rustac-py) for STAC queries over stac-geoparquet files, [async-geotiff](https://developmentseed/async-geotiff) for COG i/o, and [obstore](https://developmentseed.org/obstore) for cloud storage access.
+lazycogs takes the same approach but replaces GDAL and rasterio with a Rust-native stack: [rustac](https://stac-utils.github.io/rustac-py) for STAC queries over stac-geoparquet files, [async-geotiff](https://developmentseed/async-geotiff) for COG i/o, and [obstore](https://developmentseed.org/obstore) as the default cloud storage integration.
 
 The result is a tool that can instantly expose a lazy xarray DataArray view of massive STAC item archives in any CRS and resolution. Each array operation triggers a targeted spatial query on the stac-geoparquet file to find only the assets needed for that specific chunk — no upfront scan of every item required.
 
@@ -23,7 +23,7 @@ One constraint worth naming: lazycogs only reads Cloud Optimized GeoTIFFs. If yo
 |---|---|
 | STAC search + spatial indexing | `rustac` (DuckDB + geoparquet) |
 | COG I/O | `async-geotiff` (Rust, no GDAL) |
-| Cloud storage | `obstore` |
+| Cloud storage | `obstore` by default; any `async-geotiff`/obspec-compatible store when passed via `store=` |
 | Reprojection | `pyproj` + numpy |
 | Lazy dataset construction | xarray `BackendEntrypoint` + `LazilyIndexedArray` |
 
@@ -96,6 +96,11 @@ subset = await da.isel(x=slice(0, 10), y=slice(0, 10), time=slice(0, 10)).load_a
 event loop. Multiple concurrent chunk reads overlap naturally, so the
 async path can be faster than the synchronous `da.compute()` when
 reading many chunks inside an already-running loop.
+
+## Custom stores
+
+`lazycogs.open(..., store=...)` accepts any store object that satisfies the async range-read contract consumed by `async-geotiff`.
+For most users, the recommended path is still obstore: leave `store=None` to auto-resolve per-asset stores, or call `lazycogs.store_for()` to build one explicitly.
 
 ## Documentation
 

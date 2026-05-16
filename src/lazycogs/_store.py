@@ -1,4 +1,4 @@
-"""Resolve cloud storage HREFs into obstore ``ObjectStore`` instances."""
+"""Resolve cloud storage HREFs into store/path pairs and obstore stores."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from lazycogs._storage_ext import _extract_store_kwargs
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from async_tiff import ObspecInput
     from obstore.store import ObjectStore
 
 logger = logging.getLogger(__name__)
@@ -31,15 +32,16 @@ def _cache() -> dict[str, ObjectStore]:
 
 def resolve(
     href: str,
-    store: ObjectStore | None = None,
+    store: ObspecInput | None = None,
     path_fn: Callable[[str], str] | None = None,
-) -> tuple[ObjectStore, str]:
-    """Resolve an HREF into an ``(ObjectStore, path)`` pair.
+) -> tuple[ObspecInput, str]:
+    """Resolve an HREF into a ``(store, path)`` pair.
 
     When ``store`` is supplied, it is returned unchanged and only the object
     path is extracted from the HREF. The caller is responsible for ensuring
-    the store is rooted at the same ``scheme://netloc`` the HREF points to;
-    no introspection is performed on the provided store.
+    the store satisfies the obspec read contract accepted by
+    ``GeoTIFF.open`` and is rooted at the same ``scheme://netloc`` the HREF
+    points to; no introspection is performed on the provided store.
 
     When ``store`` is ``None``, a store is auto-constructed via
     :func:`obstore.store.from_url` using only the ``scheme://netloc`` portion
@@ -53,7 +55,8 @@ def resolve(
         href: A storage URL supported by :func:`obstore.store.from_url`
             (``s3``, ``s3a``, ``gs``, Azure variants, ``http``, ``https``,
             ``file``, ``memory``).
-        store: Optional pre-configured ``ObjectStore`` to use directly.
+        store: Optional pre-configured obspec-compatible store accepted by
+            ``GeoTIFF.open``.
         path_fn: Optional callable that takes the full HREF and returns the
             object path to use with the store.  When provided, it replaces the
             default ``urlparse``-based path extraction.  Only meaningful when
@@ -92,7 +95,7 @@ def store_for(
     duckdb_client: DuckdbClient | None = None,
     **kwargs: object,
 ) -> ObjectStore:
-    """Construct an ``ObjectStore`` by inspecting a geoparquet STAC items file.
+    """Construct an ``ObjectStore`` by inspecting a stac-geoparquet sample asset.
 
     Reads one sample item from *href*, derives the store root URL from a data
     asset HREF, and constructs an ``ObjectStore`` with obstore's own
