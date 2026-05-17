@@ -17,17 +17,18 @@ from lazycogs._chunk_reader import (
     _select_overview,
     read_chunk_async,
 )
-from lazycogs._executor import _reset_executor_state_for_tests, get_reproject_pool
+from lazycogs._executor import get_reproject_pool
 from lazycogs._mosaic_methods import FirstMethod
+from tests._executor_test_utils import reset_executor_state_for_tests
 
 
 @pytest.fixture(autouse=True)
 def reset_executor_state(monkeypatch):
     """Reset shared executor state between tests."""
     monkeypatch.delenv("LAZYCOGS_REPROJECT_WORKERS", raising=False)
-    _reset_executor_state_for_tests()
+    reset_executor_state_for_tests()
     yield
-    _reset_executor_state_for_tests()
+    reset_executor_state_for_tests()
 
 
 # ---------------------------------------------------------------------------

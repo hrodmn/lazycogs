@@ -15,7 +15,7 @@ from pandas import DataFrame
 from pyproj import CRS, Transformer
 
 from lazycogs._chunk_reader import _ChunkContext, _open_and_window
-from lazycogs._executor import _run_coroutine, get_duckdb_pool
+from lazycogs._executor import get_duckdb_pool, run_on_loop
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -752,6 +752,6 @@ class StacCogAccessor:
                 "This DataArray does not have stac_cog explain metadata. "
                 "Ensure it was created by lazycogs.open().",
             )
-        return _run_coroutine(
+        return run_on_loop(
             _explain_async(self._da, backend, fetch_headers=fetch_headers),
         )

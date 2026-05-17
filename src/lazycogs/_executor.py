@@ -6,7 +6,6 @@ import asyncio
 import concurrent.futures
 import os
 import threading
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,18 +14,10 @@ if TYPE_CHECKING:
 _REPROJECT_WORKERS_ENV = "LAZYCOGS_REPROJECT_WORKERS"
 _DUCKDB_MAX_WORKERS = 1
 
-
-@dataclass
-class _ExecutorState:
-    """Mutable singleton state for the lazycogs runtime."""
-
-    loop: asyncio.AbstractEventLoop | None = None
-    loop_thread: threading.Thread | None = None
-    reproject_pool: concurrent.futures.ThreadPoolExecutor | None = None
-    duckdb_pool: concurrent.futures.ThreadPoolExecutor | None = None
-
-
-_STATE = _ExecutorState()
+_LOOP: asyncio.AbstractEventLoop | None = None
+_LOOP_THREAD: threading.Thread | None = None
+_REPROJECT_POOL: concurrent.futures.ThreadPoolExecutor | None = None
+_DUCKDB_POOL: concurrent.futures.ThreadPoolExecutor | None = None
 _LOCK = threading.Lock()
 
 
@@ -38,14 +29,7 @@ def _default_workers() -> int:
     saturate the memory bus rather than adding CPU throughput. Keep the default
     conservative.
     """
-    return min(os.cpu_count() or 4, 4)
-
-
-def _validate_worker_count(n: int) -> int:
-    """Validate a configured worker count."""
-    if n < 1:
-        raise ValueError(f"worker count must be >= 1, got {n!r}")
-    return n
+    return min(os.cpu_count() or 1, 4)
 
 
 def _reproject_worker_count() -> int:
@@ -61,7 +45,9 @@ def _reproject_worker_count() -> int:
             f"{_REPROJECT_WORKERS_ENV} must be an integer, got {value!r}",
         ) from exc
 
-    return _validate_worker_count(parsed)
+    if parsed < 1:
+        raise ValueError(f"worker count must be >= 1, got {parsed!r}")
+    return parsed
 
 
 def _start_background_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
@@ -82,44 +68,46 @@ def _start_background_loop() -> tuple[asyncio.AbstractEventLoop, threading.Threa
 
 def _ensure_loop() -> asyncio.AbstractEventLoop:
     """Return the shared background event loop, starting it lazily."""
-    with _LOCK:
-        loop = _STATE.loop
-        thread = _STATE.loop_thread
-        if (
-            loop is not None
-            and thread is not None
-            and thread.is_alive()
-            and loop.is_running()
-            and not loop.is_closed()
-        ):
-            return loop
+    global _LOOP, _LOOP_THREAD
 
-        loop, thread = _start_background_loop()
-        _STATE.loop = loop
-        _STATE.loop_thread = thread
-        return loop
+    with _LOCK:
+        if (
+            _LOOP is not None
+            and _LOOP_THREAD is not None
+            and _LOOP_THREAD.is_alive()
+            and _LOOP.is_running()
+            and not _LOOP.is_closed()
+        ):
+            return _LOOP
+
+        _LOOP, _LOOP_THREAD = _start_background_loop()
+        return _LOOP
 
 
 def get_reproject_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Return the shared bounded reprojection executor."""
+    global _REPROJECT_POOL  # noqa: PLW0603
+
     with _LOCK:
-        if _STATE.reproject_pool is None:
-            _STATE.reproject_pool = concurrent.futures.ThreadPoolExecutor(
+        if _REPROJECT_POOL is None:
+            _REPROJECT_POOL = concurrent.futures.ThreadPoolExecutor(
                 max_workers=_reproject_worker_count(),
                 thread_name_prefix="lazycogs-reproject",
             )
-        return _STATE.reproject_pool
+        return _REPROJECT_POOL
 
 
 def get_duckdb_pool() -> concurrent.futures.ThreadPoolExecutor:
     """Return the shared bounded DuckDB executor."""
+    global _DUCKDB_POOL  # noqa: PLW0603
+
     with _LOCK:
-        if _STATE.duckdb_pool is None:
-            _STATE.duckdb_pool = concurrent.futures.ThreadPoolExecutor(
+        if _DUCKDB_POOL is None:
+            _DUCKDB_POOL = concurrent.futures.ThreadPoolExecutor(
                 max_workers=_DUCKDB_MAX_WORKERS,
                 thread_name_prefix="lazycogs-duckdb",
             )
-        return _STATE.duckdb_pool
+        return _DUCKDB_POOL
 
 
 def _submit_to_loop[T](
@@ -127,7 +115,7 @@ def _submit_to_loop[T](
 ) -> concurrent.futures.Future[T]:
     """Submit a coroutine to the shared background loop."""
     loop = _ensure_loop()
-    thread = _STATE.loop_thread
+    thread = _LOOP_THREAD
     if thread is None or not thread.is_alive() or not loop.is_running():
         coro.close()
         raise RuntimeError("lazycogs background event loop is not running")
@@ -143,37 +131,8 @@ def _submit_to_loop[T](
 def run_on_loop[T](coro: Coroutine[object, object, T]) -> T:
     """Run ``coro`` on the shared lazycogs event loop and return its result.
 
-    This is the supported public helper for constructing loop-bound resources
-    that must live on the lazycogs background loop.
+    This is the supported helper for sync code that must execute a coroutine on
+    the lazycogs background loop, including callers that need to construct
+    loop-bound resources on that loop.
     """
     return _submit_to_loop(coro).result()
-
-
-def _run_coroutine[T](coro: Coroutine[object, object, T]) -> T:
-    """Run an async coroutine from sync code on the shared background loop."""
-    return _submit_to_loop(coro).result()
-
-
-def _reset_executor_state_for_tests() -> None:
-    """Reset lazycogs executor singletons for tests."""
-    with _LOCK:
-        loop = _STATE.loop
-        thread = _STATE.loop_thread
-        reproject_pool = _STATE.reproject_pool
-        duckdb_pool = _STATE.duckdb_pool
-
-        _STATE.loop = None
-        _STATE.loop_thread = None
-        _STATE.reproject_pool = None
-        _STATE.duckdb_pool = None
-
-    if loop is not None and loop.is_running():
-        loop.call_soon_threadsafe(loop.stop)
-    if thread is not None and thread.is_alive():
-        thread.join(timeout=1)
-    if loop is not None and not loop.is_closed():
-        loop.close()
-    if reproject_pool is not None:
-        reproject_pool.shutdown(wait=True, cancel_futures=True)
-    if duckdb_pool is not None:
-        duckdb_pool.shutdown(wait=True, cancel_futures=True)

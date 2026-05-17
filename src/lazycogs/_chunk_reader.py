@@ -51,13 +51,13 @@ class _ChunkContext:
     warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None
 
 
-def _log_batch_failure(
+def _log_read_failure(
     label: str,
     key: object,
     item_id: str,
     err: BaseException,
 ) -> None:
-    """Log a warning for an item that failed inside an asyncio.gather batch."""
+    """Log a warning for an item that failed inside bounded concurrent reads."""
     logger.warning(
         "Failed to read %s %r from item %s: %s",
         label,
@@ -534,8 +534,9 @@ async def read_chunk_async(
     same source geometry compute the reprojection warp map only once (via
     :func:`_apply_bands_with_warp_cache`).
 
-    Items are processed in batches of ``max_concurrent_reads``.  When all
-    per-band mosaic methods signal completion, remaining batches are skipped.
+    All item reads are scheduled up front, but execution is bounded by
+    ``max_concurrent_reads`` via an ``asyncio.Semaphore``. When all per-band
+    mosaic methods signal completion, remaining pending reads are skipped.
 
     Args:
         items: List of STAC item dicts to mosaic.  Processed in order.
@@ -603,7 +604,7 @@ async def read_chunk_async(
         return all(m.is_done for m in mosaic_methods.values())
 
     def _error(idx: int, exc: BaseException) -> None:
-        _log_batch_failure("bands", bands, items[idx].get("id", "<unknown>"), exc)
+        _log_read_failure("bands", bands, items[idx].get("id", "<unknown>"), exc)
 
     await _drain_in_order(task_list, _feed, _done, _error)
 

@@ -16,7 +16,7 @@ from xarray.core import indexing
 
 from lazycogs._chunk_reader import read_chunk_async
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
-from lazycogs._executor import _run_coroutine, get_duckdb_pool
+from lazycogs._executor import get_duckdb_pool, run_on_loop
 
 logger = logging.getLogger(__name__)
 
@@ -512,7 +512,7 @@ class MultiBandStacBackendArray(BackendArray):
             Numpy array with shape determined by the indexing key.
 
         """
-        return _run_coroutine(self._async_getitem(key))
+        return run_on_loop(self._async_getitem(key))
 
     async def _async_getitem(self, key: tuple[Any, ...]) -> np.ndarray:
         """Materialise the chunk identified by ``key``.

@@ -13,7 +13,7 @@ import pytest
 
 import lazycogs
 from lazycogs import FirstMethod, MedianMethod, MosaicMethodBase
-from lazycogs._executor import _reset_executor_state_for_tests
+from tests._executor_test_utils import reset_executor_state_for_tests
 
 from .conftest import (
     BENCHMARK_BBOX,
@@ -96,7 +96,7 @@ def test_reproject_workers(
     causes diminishing returns above 4 threads.
     """
     os.environ["LAZYCOGS_REPROJECT_WORKERS"] = str(n_workers)
-    _reset_executor_state_for_tests()
+    reset_executor_state_for_tests()
 
     def run() -> object:
         da = lazycogs.open(
@@ -114,7 +114,7 @@ def test_reproject_workers(
     finally:
         # Reset to default so other benchmarks are not affected.
         os.environ.pop("LAZYCOGS_REPROJECT_WORKERS", None)
-        _reset_executor_state_for_tests()
+        reset_executor_state_for_tests()
 
 
 @pytest.mark.benchmark

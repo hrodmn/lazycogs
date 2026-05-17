@@ -71,7 +71,9 @@ await rustac.search_to(
     bbox=bbox_4326,
 )
 
-# Open a fully lazy (band, time, y, x) DataArray. No COGs are read yet.
+# Open a fully lazy (band, time, y, x) DataArray. No pixel data is read yet.
+# lazycogs does perform a small storage-access smoketest here so auth or
+# object-store misconfiguration fails early instead of on the first chunk read.
 da = lazycogs.open(
     "items.parquet",
     bbox=dst_bbox,
@@ -107,7 +109,8 @@ For most users, the recommended path is still obstore: leave `store=None` to aut
 - Sync callers submit work to one shared persistent lazycogs event loop.
 - CPU-bound reprojection runs on one bounded shared thread pool. Set
   `LAZYCOGS_REPROJECT_WORKERS` before first use to change the default
-  `min(os.cpu_count(), 4)` limit.
+  `min(os.cpu_count() or 1, 4)` limit. The value is read when the pool is
+  first created; changes after that are ignored for the life of the process.
 - DuckDB queries yield the event loop by running on a small explicit
   executor instead of on the loop thread. On the local benchmark fixture,
   DuckDB stayed under 2% of per-date chunk wall time, so there is no

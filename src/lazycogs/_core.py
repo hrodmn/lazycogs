@@ -526,9 +526,9 @@ def open(  # noqa: A001
             ``None`` (default), each asset URL is parsed to create or reuse a
             per-thread cached obstore-backed store.
         max_concurrent_reads: Maximum number of COG reads to run concurrently
-            per chunk.  Items are processed in batches of this size, which
-            bounds peak in-flight memory when a chunk overlaps many files.
-            Methods that support early exit (e.g. the default
+            per chunk.  Concurrency is bounded to this size with an
+            ``asyncio.Semaphore``, which bounds peak in-flight memory when a
+            chunk overlaps many files. Methods that support early exit (e.g. the default
             :class:`~lazycogs._mosaic_methods.FirstMethod`) will stop
             reading once every output pixel is filled, so lower values also
             reduce unnecessary I/O on dense datasets.  Defaults to 32.
