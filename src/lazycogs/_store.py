@@ -171,9 +171,3 @@ def store_for(
     filtered_inferred = {k: v for k, v in inferred.items() if k not in base_config}
 
     return from_url(root_url, **{**filtered_inferred, **kwargs})
-
-
-def _clear_store_cache_for_tests() -> None:
-    """Clear the shared store cache for tests."""
-    with _STORE_CACHE_LOCK:
-        _STORE_CACHE.clear()

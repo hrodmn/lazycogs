@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,22 @@ import rasterio.enums
 import rasterio.shutil
 from affine import Affine
 from pyproj import CRS
+
+from lazycogs import _store
+
+
+def clear_store_cache_for_tests() -> None:
+    """Clear the shared store cache between tests that exercise resolve()."""
+    with _store._STORE_CACHE_LOCK:
+        _store._STORE_CACHE.clear()
+
+
+@pytest.fixture
+def clear_store_cache() -> Iterator[None]:
+    """Reset the shared store cache around a test."""
+    clear_store_cache_for_tests()
+    yield
+    clear_store_cache_for_tests()
 
 
 @pytest.fixture(scope="session")

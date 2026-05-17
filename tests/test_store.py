@@ -14,15 +14,9 @@ from lazycogs._storage_ext import (
     _extract_store_kwargs_v2,
     _storage_extension_version,
 )
-from lazycogs._store import _clear_store_cache_for_tests, resolve, store_for
+from lazycogs._store import resolve, store_for
 
-
-@pytest.fixture(autouse=True)
-def clear_store_cache() -> None:
-    """Clear the shared store cache between tests."""
-    _clear_store_cache_for_tests()
-    yield
-    _clear_store_cache_for_tests()
+pytestmark = pytest.mark.usefixtures("clear_store_cache")
 
 
 
@@ -77,21 +71,21 @@ def test_unsupported_scheme_raises():
         resolve("ftp://server/file.tif")
 
 
-def test_thread_local_cache_same_bucket():
+def test_shared_cache_same_bucket():
     """Two HREFs in the same bucket return the same store object."""
     store_a, _ = resolve("s3://shared-bucket/file1.tif")
     store_b, _ = resolve("s3://shared-bucket/file2.tif")
     assert store_a is store_b
 
 
-def test_thread_local_cache_different_buckets():
+def test_shared_cache_different_buckets():
     """HREFs in different buckets return distinct store objects."""
     store_a, _ = resolve("s3://bucket-one/file.tif")
     store_b, _ = resolve("s3://bucket-two/file.tif")
     assert store_a is not store_b
 
 
-def test_thread_local_cache_same_https_host():
+def test_shared_cache_same_https_host():
     """Two HTTPS HREFs on the same host share a store."""
     store_a, _ = resolve("https://cdn.example.com/img/a.tif")
     store_b, _ = resolve("https://cdn.example.com/img/b.tif")
