@@ -1,6 +1,6 @@
 # Cloud storage
 
-lazycogs uses [obstore](https://developmentseed.org/obstore/latest/) as its default way to read COG assets from cloud object storage. It can also accept any custom store object that satisfies the async range-read contract consumed by `async-geotiff`. This guide covers the default obstore path plus the custom-store contract.
+lazycogs uses [obstore](https://developmentseed.org/obstore/latest/) as its default way to read COG assets from cloud object storage. It can also accept any custom store object that satisfies the [async range-read contract](https://developmentseed.org/async-geotiff/latest/api/geotiff/#async_geotiff.Store) consumed by `async-geotiff`. This guide covers the default obstore path plus the custom-store contract.
 
 ## Default behavior
 
