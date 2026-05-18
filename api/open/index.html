@@ -1169,7 +1169,7 @@
 <a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">dtype</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">|</span> <span class="n"><span title="numpy.dtype">dtype</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">mosaic_method</span><span class="p">:</span> <span class="n"><span title="type">type</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="lazycogs.MosaicMethodBase (lazycogs._mosaic_methods.MosaicMethodBase)" href="../mosaic/#lazycogs.MosaicMethodBase">MosaicMethodBase</a></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">time_period</span><span class="p">:</span> <span class="n"><span title="str">str</span></span> <span class="o">=</span> <span class="s2">&quot;P1D&quot;</span><span class="p">,</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">store</span><span class="p">:</span> <span class="n"><span title="obstore.store.ObjectStore">ObjectStore</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">store</span><span class="p">:</span> <span class="n"><span title="async_geotiff.Store">Store</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="n">max_concurrent_reads</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
 <a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="n">path_from_href</span><span class="p">:</span> <span class="n"><span title="collections.abc.Callable">Callable</span></span><span class="p">[[</span><span class="n"><span title="str">str</span></span><span class="p">],</span> <span class="n"><span title="str">str</span></span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    <span class="n">duckdb_client</span><span class="p">:</span> <span class="n"><span title="rustac.DuckdbClient">DuckdbClient</span></span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -1440,15 +1440,16 @@ such as <code>"P16D"</code> are aligned to an epoch of 2000-01-01.</p>
                 <code>store</code>
             </td>
             <td>
-                  <code><span title="obstore.store.ObjectStore">ObjectStore</span> | None</code>
+                  <code><span title="async_geotiff.Store">Store</span> | None</code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Pre-configured obstore <code>ObjectStore</code> instance to use for all
-asset reads.  Useful when credentials, custom endpoints, or
-non-default options are needed without relying on automatic store
-resolution from each HREF.  When <code>None</code> (default), each asset
-URL is parsed to create or reuse a per-thread cached store.</p>
+                <p>Pre-configured :class:<code>async_geotiff.Store</code> accepted by
+<code>GeoTIFF.open</code> to use for all asset reads. Useful when
+credentials, custom endpoints, or non-default options are needed
+without relying on automatic store resolution from each HREF. When
+<code>None</code> (default), each asset URL is parsed to create or reuse a
+per-thread cached obstore-backed store.</p>
               </div>
             </td>
             <td>
