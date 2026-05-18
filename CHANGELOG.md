@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/developmentseed/lazycogs/compare/v0.3.1...v0.3.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* replace ObjectStore type requirement with async_geotiff.Store ([#60](https://github.com/developmentseed/lazycogs/issues/60)) ([ea2837a](https://github.com/developmentseed/lazycogs/commit/ea2837a8d7260a6c3890b4723a83c1230bde8a3e))
+
 ## [0.3.1](https://github.com/developmentseed/lazycogs/compare/v0.3.0...v0.3.1) (2026-05-15)
 
 
