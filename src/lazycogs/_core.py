@@ -16,7 +16,7 @@ from xarray.core import indexing
 
 from lazycogs._backend import MultiBandStacBackendArray
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
-from lazycogs._executor import _run_coroutine
+from lazycogs._executor import run_on_loop
 from lazycogs._grid import compute_output_grid
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
 from lazycogs._store import resolve
@@ -168,7 +168,7 @@ def _smoketest_store(
 
     resolved_store, path = resolve(href, store=store, path_fn=path_from_href)
     try:
-        _run_coroutine(_open_store_sample(path, store=resolved_store))
+        run_on_loop(_open_store_sample(path, store=resolved_store))
     except Exception as e:
         raise RuntimeError(
             f"Store cannot open {href!r} through GeoTIFF.open: {e}. "
