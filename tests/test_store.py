@@ -19,7 +19,6 @@ from lazycogs._store import resolve, store_for
 pytestmark = pytest.mark.usefixtures("clear_store_cache")
 
 
-
 class _ProtocolStore:
     async def get_range_async(self, _start: int, _end: int):
         return b""
