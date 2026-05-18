@@ -312,9 +312,13 @@ def opened_dataarray(tmp_path):
 
     table = _items_to_arrow([{"properties": {"datetime": "2023-01-15T10:00:00Z"}}])
 
+    async def fake_open(path: str, *, store):
+        return object()
+
     with (
         patch("rustac.DuckdbClient.search", return_value=[_fake_open_item()]),
         patch("rustac.DuckdbClient.search_to_arrow", return_value=table),
+        patch("lazycogs._core.GeoTIFF.open", side_effect=fake_open),
     ):
         return lazycogs.open(
             str(parquet),
@@ -392,6 +396,17 @@ def test_chunked_spatial_selection_full_compute_succeeds(opened_dataarray):
 # _smoketest_store
 # ---------------------------------------------------------------------------
 
+
+class _ProtocolStore:
+    """Minimal non-obstore store that satisfies the async_geotiff.Store shape."""
+
+    async def get_range_async(self, _start: int, _end: int):
+        return b""
+
+    async def get_ranges_async(self, starts_ends):
+        return [b"" for _ in starts_ends]
+
+
 _SMOKETEST_ITEM = {
     "id": "smoke-item",
     "stac_extensions": [],
@@ -406,29 +421,21 @@ _SMOKETEST_ITEM = {
 }
 
 
-def test_smoketest_passes_when_head_succeeds():
-    """_smoketest_store does not raise when head() succeeds."""
+def test_smoketest_passes_when_geotiff_open_succeeds():
+    """_smoketest_store does not raise when GeoTIFF.open succeeds."""
 
     store = MemoryStore()
     store.put("B04.tif", b"dummy")
 
-    with patch("rustac.DuckdbClient.search", return_value=[_SMOKETEST_ITEM]):
-        _smoketest_store(
-            "items.parquet",
-            duckdb_client=DuckdbClient(),
-            store=store,
-            path_from_href=lambda href: href.split("/", 3)[-1],
-        )
+    async def fake_open(path: str, *, store):
+        assert path == "B04.tif"
+        assert store is store_obj
+        return object()
 
-
-def test_smoketest_raises_runtime_error_on_head_failure():
-    """_smoketest_store raises RuntimeError when the store cannot access the asset."""
-
-    store = MemoryStore()  # empty — head() will raise
-
+    store_obj = store
     with (
         patch("rustac.DuckdbClient.search", return_value=[_SMOKETEST_ITEM]),
-        pytest.raises(RuntimeError, match="cannot access"),
+        patch("lazycogs._core.GeoTIFF.open", side_effect=fake_open),
     ):
         _smoketest_store(
             "items.parquet",
@@ -436,6 +443,58 @@ def test_smoketest_raises_runtime_error_on_head_failure():
             store=store,
             path_from_href=lambda href: href.split("/", 3)[-1],
         )
+
+
+def test_smoketest_raises_runtime_error_on_geotiff_open_failure():
+    """_smoketest_store raises RuntimeError when GeoTIFF.open fails."""
+
+    store = MemoryStore()
+
+    async def fake_open(path: str, *, store):
+        raise FileNotFoundError(path)
+
+    with (
+        patch("rustac.DuckdbClient.search", return_value=[_SMOKETEST_ITEM]),
+        patch("lazycogs._core.GeoTIFF.open", side_effect=fake_open),
+        pytest.raises(RuntimeError, match=r"GeoTIFF\.open"),
+    ):
+        _smoketest_store(
+            "items.parquet",
+            duckdb_client=DuckdbClient(),
+            store=store,
+            path_from_href=lambda href: href.split("/", 3)[-1],
+        )
+
+
+def test_smoketest_accepts_protocol_store_without_head(tmp_path):
+    """A custom protocol store without head() still passes startup validation."""
+
+    parquet = tmp_path / "items.parquet"
+    parquet.write_bytes(b"")
+    store = _ProtocolStore()
+    table = _items_to_arrow([{"properties": {"datetime": "2023-01-15T10:00:00Z"}}])
+
+    async def fake_open(path: str, *, store):
+        assert path == "B04.tif"
+        assert store is protocol_store
+        return object()
+
+    protocol_store = store
+    with (
+        patch("rustac.DuckdbClient.search", return_value=[_fake_open_item()]),
+        patch("rustac.DuckdbClient.search_to_arrow", return_value=table),
+        patch("lazycogs._core.GeoTIFF.open", side_effect=fake_open),
+    ):
+        da = lazycogs.open(
+            str(parquet),
+            bbox=(0.0, 0.0, 100.0, 100.0),
+            crs="EPSG:32632",
+            resolution=10.0,
+            store=store,
+            path_from_href=lambda href: href.split("/", 3)[-1],
+        )
+
+    assert da.attrs["_stac_backend"].store is store
 
 
 def test_smoketest_no_op_when_no_items():
@@ -448,7 +507,6 @@ def test_smoketest_prefers_specified_band():
     """_smoketest_store uses the first specified band when bands= is given."""
 
     store = MemoryStore()
-    store.put("B08.tif", b"dummy")
 
     item = {
         "id": "multi-band-item",
@@ -460,8 +518,16 @@ def test_smoketest_prefers_specified_band():
         },
     }
 
-    with patch("rustac.DuckdbClient.search", return_value=[item]):
-        # B08 exists in the MemoryStore; B04 does not — smoketest must pick B08
+    seen: list[str] = []
+
+    async def fake_open(path: str, *, store):
+        seen.append(path)
+        return object()
+
+    with (
+        patch("rustac.DuckdbClient.search", return_value=[item]),
+        patch("lazycogs._core.GeoTIFF.open", side_effect=fake_open),
+    ):
         _smoketest_store(
             "items.parquet",
             duckdb_client=DuckdbClient(),
@@ -469,3 +535,5 @@ def test_smoketest_prefers_specified_band():
             store=store,
             path_from_href=lambda href: href.split("/", 3)[-1],
         )
+
+    assert seen == ["B08.tif"]

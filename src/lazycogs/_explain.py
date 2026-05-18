@@ -20,7 +20,7 @@ from lazycogs._executor import _DUCKDB_EXECUTOR, _run_coroutine
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from obstore.store import ObjectStore
+    from async_geotiff import Store
 
     from lazycogs._backend import MultiBandStacBackendArray
 
@@ -447,7 +447,7 @@ async def _inspect_item_async(
     dst_crs: CRS,
     chunk_width: int,
     chunk_height: int,
-    store: ObjectStore | None = None,
+    store: Store | None = None,
 ) -> CogRead | None:
     """Open a COG header and compute the overview level and read window.
 
@@ -460,7 +460,8 @@ async def _inspect_item_async(
         dst_crs: CRS of the destination chunk.
         chunk_width: Chunk width in pixels.
         chunk_height: Chunk height in pixels.
-        store: Optional pre-configured obstore ``ObjectStore``.
+        store: Optional pre-configured :class:`async_geotiff.Store`
+            accepted by ``GeoTIFF.open``.
 
     Returns:
         A :class:`CogRead` with all header fields populated, or ``None`` if

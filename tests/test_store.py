@@ -15,6 +15,15 @@ from lazycogs._storage_ext import (
 )
 from lazycogs._store import resolve, store_for
 
+
+class _ProtocolStore:
+    async def get_range_async(self, _start: int, _end: int):
+        return b""
+
+    async def get_ranges_async(self, starts_ends):
+        return [b"" for _ in starts_ends]
+
+
 # ---------------------------------------------------------------------------
 # resolve
 # ---------------------------------------------------------------------------
@@ -82,6 +91,14 @@ def test_thread_local_cache_same_https_host():
 def test_user_supplied_store_is_returned_unchanged():
     """When a store is passed, it is returned as-is with just the path extracted."""
     user_store = MemoryStore()
+    store, path = resolve("s3://bucket/some/key.tif", store=user_store)
+    assert store is user_store
+    assert path == "some/key.tif"
+
+
+def test_user_supplied_protocol_store_is_returned_unchanged():
+    """resolve() accepts a non-obstore store that satisfies the reader contract."""
+    user_store = _ProtocolStore()
     store, path = resolve("s3://bucket/some/key.tif", store=user_store)
     assert store is user_store
     assert path == "some/key.tif"

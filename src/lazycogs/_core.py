@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
+from async_geotiff import GeoTIFF
 from pyproj import CRS, Transformer
 from rasterix import RasterIndex
 from rustac import DuckdbClient
@@ -15,6 +16,7 @@ from xarray.core import indexing
 
 from lazycogs._backend import MultiBandStacBackendArray
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
+from lazycogs._executor import _run_coroutine
 from lazycogs._grid import compute_output_grid
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
 from lazycogs._store import resolve
@@ -24,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from arro3.core import Table
-    from obstore.store import ObjectStore
+    from async_geotiff import Store
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +107,11 @@ def _discover_bands(
     return data_bands or other_bands or list(assets)
 
 
+async def _open_store_sample(path: str, *, store: Store) -> None:
+    """Open one representative asset through ``GeoTIFF.open`` for validation."""
+    await GeoTIFF.open(path, store=store)
+
+
 def _smoketest_store(
     parquet_path: str,
     *,
@@ -114,15 +121,15 @@ def _smoketest_store(
     filter: str | dict[str, Any] | None = None,
     ids: list[str] | None = None,
     bands: list[str] | None = None,
-    store: ObjectStore | None = None,
+    store: Store | None = None,
     path_from_href: Callable[[str], str] | None = None,
 ) -> None:
-    """Verify the object store can access a sample asset from the parquet.
+    """Verify the configured store can open a sample asset from the parquet.
 
-    Fetches one item, resolves the object store for a representative data asset
-    HREF, and calls ``head()`` to confirm access.  Raises ``RuntimeError`` if
-    the store cannot reach the asset so misconfiguration is caught at
-    :func:`open` time rather than deferred to the first chunk read.
+    Fetches one item, resolves the store for a representative data asset HREF,
+    and validates it by calling ``GeoTIFF.open`` on the resolved path. Raises
+    ``RuntimeError`` if the store cannot reach the asset so misconfiguration is
+    caught at :func:`open` time rather than deferred to the first chunk read.
     """
     items = duckdb_client.search(
         parquet_path,
@@ -161,10 +168,10 @@ def _smoketest_store(
 
     resolved_store, path = resolve(href, store=store, path_fn=path_from_href)
     try:
-        resolved_store.head(path)
+        _run_coroutine(_open_store_sample(path, store=resolved_store))
     except Exception as e:
         raise RuntimeError(
-            f"Object store cannot access {href!r}: {e}. "
+            f"Store cannot open {href!r} through GeoTIFF.open: {e}. "
             "Pass a configured store= argument to lazycogs.open() to authenticate. "
             "See the cloud storage guide for examples.",
         ) from e
@@ -299,7 +306,7 @@ def _build_dataarray(
     out_dtype: np.dtype,
     method_cls: type[MosaicMethodBase],
     chunks: dict[str, int] | None,
-    store: ObjectStore | None = None,
+    store: Store | None = None,
     max_concurrent_reads: int = 32,
     path_from_href: Callable[[str], str] | None = None,
 ) -> DataArray:
@@ -329,9 +336,9 @@ def _build_dataarray(
         out_dtype: Output array dtype.
         method_cls: Mosaic method class.
         chunks: Passed to ``DataArray.chunk()`` if not ``None``.
-        store: Pre-configured obstore ``ObjectStore`` instance.  When
-            provided, it is used directly for all asset reads instead of
-            resolving a store from each HREF.
+        store: Pre-configured :class:`async_geotiff.Store` accepted by
+            ``GeoTIFF.open``. When provided, it is used directly for all asset
+            reads instead of resolving an obstore-backed store from each HREF.
         max_concurrent_reads: Maximum number of COG reads to run concurrently
             per chunk.
         path_from_href: Optional callable ``(href: str) -> str`` passed to
@@ -470,7 +477,7 @@ def open(  # noqa: A001
     dtype: str | np.dtype | None = None,
     mosaic_method: type[MosaicMethodBase] | None = None,
     time_period: str = "P1D",
-    store: ObjectStore | None = None,
+    store: Store | None = None,
     max_concurrent_reads: int = 32,
     path_from_href: Callable[[str], str] | None = None,
     duckdb_client: DuckdbClient | None = None,
@@ -512,11 +519,12 @@ def open(  # noqa: A001
             (calendar year).  Defaults to ``"P1D"`` (one step per calendar
             day), which preserves the previous behaviour.  Multi-day windows
             such as ``"P16D"`` are aligned to an epoch of 2000-01-01.
-        store: Pre-configured obstore ``ObjectStore`` instance to use for all
-            asset reads.  Useful when credentials, custom endpoints, or
-            non-default options are needed without relying on automatic store
-            resolution from each HREF.  When ``None`` (default), each asset
-            URL is parsed to create or reuse a per-thread cached store.
+        store: Pre-configured :class:`async_geotiff.Store` accepted by
+            ``GeoTIFF.open`` to use for all asset reads. Useful when
+            credentials, custom endpoints, or non-default options are needed
+            without relying on automatic store resolution from each HREF. When
+            ``None`` (default), each asset URL is parsed to create or reuse a
+            per-thread cached obstore-backed store.
         max_concurrent_reads: Maximum number of COG reads to run concurrently
             per chunk.  Items are processed in batches of this size, which
             bounds peak in-flight memory when a chunk overlaps many files.

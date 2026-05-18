@@ -1,14 +1,20 @@
 # Cloud storage
 
-lazycogs uses [obstore](https://developmentseed.org/obstore/latest/) to read COG assets from cloud object storage. This guide covers how to configure object stores for different storage backends and authentication scenarios.
+lazycogs uses [obstore](https://developmentseed.org/obstore/latest/) as its default way to read COG assets from cloud object storage. It can also accept any custom store object that satisfies the [async range-read contract](https://developmentseed.org/async-geotiff/latest/api/geotiff/#async_geotiff.Store) consumed by `async-geotiff`. This guide covers the default obstore path plus the custom-store contract.
 
 ## Default behavior
 
 By default, `lazycogs.open()` parses each asset HREF into an `ObjectStore` using [`obstore.store.from_url`](https://developmentseed.org/obstore/latest/api/store/from_url/). No credential defaults are applied; the store uses obstore's own environment-based credential discovery (environment variables, instance metadata, config files, etc.).
 
-`lazycogs.open()` runs a lightweight storage smoketest on startup: it resolves the object store for a sample data asset and calls `head()` to confirm access. If the store cannot reach the asset, a `RuntimeError` is raised immediately with a clear message rather than deferring the failure to the first chunk read.
+`lazycogs.open()` runs a lightweight storage smoketest on startup: it resolves the store for a sample data asset and calls `GeoTIFF.open(..., store=...)` to confirm access through the same contract used by the real reader. If the store cannot reach the asset, a `RuntimeError` is raised immediately with a clear message rather than deferring the failure to the first chunk read.
 
 For public buckets that do not require signed requests, pass `skip_signature=True` when constructing the store. For authenticated buckets, provide credentials via environment variables or a pre-configured store.
+
+## Custom store contract
+
+When you pass `store=` explicitly, lazycogs forwards that object to `async-geotiff`. The object does not need to be an obstore `ObjectStore`; it only needs to satisfy the [obspec-compatible async range-read contract](https://developmentseed.org/async-geotiff/latest/api/geotiff/#async_geotiff.Store) accepted by [`GeoTIFF.open()`](https://developmentseed.org/async-geotiff/latest/api/geotiff/#async_geotiff.GeoTIFF.open).
+
+For most users, obstore is still the recommended path because `store=None` auto-resolves it for each asset HREF and `lazycogs.store_for()` constructs it for you.
 
 ## Constructing a store from your data
 
@@ -29,7 +35,7 @@ store = lazycogs.store_for("items.parquet", asset="B04")
 
 ## Constructing stores manually
 
-For authenticated buckets, requester-pays buckets, custom endpoints, or non-standard authentication, construct the store yourself:
+For authenticated buckets, requester-pays buckets, custom endpoints, or non-standard authentication, construct an obstore-backed store yourself:
 
 ```python
 from obstore.store import S3Store, GCSStore, HTTPStore
