@@ -19,7 +19,7 @@ vals = da.sel(x=299965, y=2653947, method="nearest").sel(time=slice("2025-06", "
 
 ## When to add chunks
 
-Add `chunks={"time": 1}` when you want dask to distribute work across multiple workers. Without chunks, all time steps share one event loop and one reprojection thread pool. I/O is concurrent but CPU-bound reprojection is serialized within that pool. With temporal chunks, each time step becomes an independent dask task with its own event loop and thread pool, so reprojection work can run in true parallel across workers:
+Add `chunks={"time": 1}` when you want dask to distribute work across multiple workers. Without chunks, all time steps share one lazycogs event loop and one bounded reprojection pool. I/O is concurrent but CPU-bound reprojection is bounded by that shared pool. With temporal chunks, dask can run multiple chunk tasks in parallel across worker threads, all submitting to the same lazycogs loop while still sharing the same bounded reprojection pool:
 
 ```python
 da = lazycogs.open(
@@ -34,7 +34,7 @@ da.max(dim="time").compute()  # each time step runs in its own dask task
 
 ## Spatial chunks
 
-Avoid spatial chunks unless you are under memory pressure. lazycogs handles spatial I/O concurrency internally through its async event loop — adding spatial dask tasks layers DuckDB query overhead on top of I/O that was already happening concurrently.
+Avoid spatial chunks unless you are under memory pressure. lazycogs handles spatial I/O concurrency internally through its async event loop — adding spatial dask tasks layers extra DuckDB query overhead on top of I/O that was already happening concurrently.
 
 The one case where spatial chunks are useful is when a single time step is too large to fit in memory even at `max_concurrent_reads=1`. In that case, small spatial chunks limit how many pixels are in flight at once.
 
@@ -57,17 +57,16 @@ da = lazycogs.open(
 )
 ```
 
-## `set_reproject_workers`
+## `LAZYCOGS_REPROJECT_WORKERS`
 
-Controls how many threads each chunk's event loop uses for CPU-bound reprojection (pyproj + numpy). The default is `min(os.cpu_count(), 4)`.
+Controls how many threads the shared reprojection pool uses for CPU-bound reprojection (pyproj + numpy). The default is `min(os.cpu_count(), 4)`.
 
 Reprojection is memory-bandwidth-bound rather than compute-bound. Benchmarks show diminishing returns above 4 threads because concurrent large-array operations saturate the memory bus rather than adding throughput. Raising this beyond 4 is rarely useful.
 
-Each chunk gets its own independent thread pool, so dask tasks do not queue behind each other for reprojection.
+Set the environment variable before the first lazycogs chunk read:
 
-```python
-import lazycogs
-lazycogs.set_reproject_workers(2)   # reduce from default if memory-constrained
+```bash
+export LAZYCOGS_REPROJECT_WORKERS=2
 ```
 
 See also: [API reference for open()](../api/open.md), [API reference for utilities](../api/utils.md), [Architecture](../architecture.md)

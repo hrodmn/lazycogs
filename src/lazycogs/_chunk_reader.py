@@ -12,7 +12,7 @@ import numpy as np
 from async_geotiff import GeoTIFF, Window
 from numpy import ma
 
-from lazycogs._executor import _run_coroutine
+from lazycogs._executor import get_reproject_pool
 from lazycogs._mosaic_methods import FirstMethod, MosaicMethodBase
 from lazycogs._reproject import (
     WarpMap,
@@ -51,13 +51,13 @@ class _ChunkContext:
     warp_cache: dict[tuple[tuple[float, ...], CRS], WarpMap] | None
 
 
-def _log_batch_failure(
+def _log_read_failure(
     label: str,
     key: object,
     item_id: str,
     err: BaseException,
 ) -> None:
-    """Log a warning for an item that failed inside an asyncio.gather batch."""
+    """Log a warning for an item that failed inside bounded concurrent reads."""
     logger.warning(
         "Failed to read %s %r from item %s: %s",
         label,
@@ -445,7 +445,7 @@ async def _read_item_band(
     # Compute warp maps and apply, sharing maps across bands with identical geometry.
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        None,
+        get_reproject_pool(),
         lambda: _apply_bands_with_warp_cache(
             band_rasters,
             ctx.chunk_affine,
@@ -534,8 +534,9 @@ async def read_chunk_async(
     same source geometry compute the reprojection warp map only once (via
     :func:`_apply_bands_with_warp_cache`).
 
-    Items are processed in batches of ``max_concurrent_reads``.  When all
-    per-band mosaic methods signal completion, remaining batches are skipped.
+    All item reads are scheduled up front, but execution is bounded by
+    ``max_concurrent_reads`` via an ``asyncio.Semaphore``. When all per-band
+    mosaic methods signal completion, remaining pending reads are skipped.
 
     Args:
         items: List of STAC item dicts to mosaic.  Processed in order.
@@ -603,7 +604,7 @@ async def read_chunk_async(
         return all(m.is_done for m in mosaic_methods.values())
 
     def _error(idx: int, exc: BaseException) -> None:
-        _log_batch_failure("bands", bands, items[idx].get("id", "<unknown>"), exc)
+        _log_read_failure("bands", bands, items[idx].get("id", "<unknown>"), exc)
 
     await _drain_in_order(task_list, _feed, _done, _error)
 
@@ -619,63 +620,3 @@ async def read_chunk_async(
                 dtype=np.float32,
             )
     return output
-
-
-def read_chunk(
-    items: list[dict],
-    bands: list[str],
-    chunk_affine: Affine,
-    dst_crs: CRS,
-    chunk_width: int,
-    chunk_height: int,
-    nodata: float | None = None,
-    mosaic_method_cls: type[MosaicMethodBase] | None = None,
-    store: Store | None = None,
-    max_concurrent_reads: int = 32,
-    warp_cache: dict | None = None,
-    path_fn: Callable[[str], str] | None = None,
-) -> dict[str, np.ndarray]:
-    """Run :func:`read_chunk_async` on the persistent per-thread background loop.
-
-    All arguments are identical to :func:`read_chunk_async`.
-
-    Args:
-        items: List of STAC item dicts to mosaic.  Processed in order.
-        bands: Asset keys identifying the bands to read from each item.
-        chunk_affine: Affine transform of the destination chunk.
-        dst_crs: CRS of the destination chunk.
-        chunk_width: Width of the destination chunk in pixels.
-        chunk_height: Height of the destination chunk in pixels.
-        nodata: No-data fill value.
-        mosaic_method_cls: Mosaic method class instantiated once per band.
-            Defaults to :class:`~lazycogs._mosaic_methods.FirstMethod`.
-        store: Optional pre-configured :class:`async_geotiff.Store`
-            accepted by ``GeoTIFF.open``.
-        max_concurrent_reads: Maximum number of COG reads to run concurrently.
-        warp_cache: Optional cache shared across calls for reusing warp maps
-            from earlier time steps.
-        path_fn: Optional callable that takes an asset HREF and returns the
-            object path to use with *store*.
-
-    Returns:
-        ``dict`` mapping each band name to an array of shape
-        ``(cog_bands, chunk_height, chunk_width)`` with dtype matching the
-        source COGs.
-
-    """
-    return _run_coroutine(
-        read_chunk_async(
-            items=items,
-            bands=bands,
-            chunk_affine=chunk_affine,
-            dst_crs=dst_crs,
-            chunk_width=chunk_width,
-            chunk_height=chunk_height,
-            nodata=nodata,
-            mosaic_method_cls=mosaic_method_cls,
-            store=store,
-            max_concurrent_reads=max_concurrent_reads,
-            warp_cache=warp_cache,
-            path_fn=path_fn,
-        ),
-    )

@@ -14,11 +14,11 @@ For large pre-existing STAC archives stored as hive-partitioned parquet director
 
 Work is split sharply into two phases.
 
-**Phase 0 — open time** runs at `open()` call time. It does the minimum needed to build a fully-described lazy DataArray: one DuckDB query to discover bands, one DuckDB query to build the time axis, and a grid computation. No pixel I/O happens. No dask task graph is built. A single `MultiBandStacBackendArray` is wrapped in an xarray `LazilyIndexedArray`.
+**Phase 0 — open time** runs at `open()` call time. It does the minimum needed to build a fully-described lazy DataArray: one DuckDB query to discover bands, one DuckDB query to build the time axis, a small object-store access smoketest, and a grid computation. No pixel I/O happens. No dask task graph is built. A single `MultiBandStacBackendArray` is wrapped in an xarray `LazilyIndexedArray`.
 
 **Phase 1 — compute time** runs inside a dask worker when a chunk is actually computed. `MultiBandStacBackendArray.__getitem__` receives the exact `(band, time, y, x)` index for the chunk, derives the chunk's spatial footprint, queries DuckDB for only the COGs that overlap that footprint and time step, reads and reprojects all selected bands concurrently with `asyncio`, and mosaics the results.
 
-This split means that `open()` is nearly instant even for large queries, and the DuckDB spatial filter runs once per chunk rather than over the entire bbox at open time.
+This split means that `open()` is nearly instant even for large queries, and the DuckDB spatial filter runs once per chunk rather than over the entire bbox at open time. The one exception to the "metadata-only" story is the storage smoketest: `open()` issues a single `head()` against one representative asset so authentication and object-store wiring fail early with a clear error.
 
 ## Module overview
 
@@ -27,12 +27,12 @@ src/lazycogs/
   _core.py           Entry point. open(), band discovery, time-step building.
   _backend.py        MultiBandStacBackendArray — xarray BackendArray implementation that bridges xarray indexing to chunk reads.
   _chunk_reader.py   Async mosaic logic: open COGs, select overviews, read windows, reproject, mosaic.
-  _executor.py       Per-chunk reprojection thread pool configuration. Exposes set_reproject_workers() and get_max_workers(); the actual pool is created per event loop in _backend.py.
+  _executor.py       Shared background loop and bounded executors. Exposes run_on_loop().
   _explain.py        Dry-run read estimator. Registers the da.lazycogs.explain() xarray accessor.
   _grid.py           Compute output affine transform and dimensions from bbox + resolution.
   _reproject.py      Nearest-neighbor reprojection using pyproj Transformer + numpy fancy indexing.
   _storage_ext.py    STAC Storage Extension metadata parsing (version detection, kwargs extraction for v1 and v2).
-  _store.py          Resolve cloud HREFs into obstore Store instances (or route through a user-supplied store) with a thread-local cache; store_for() factory for constructing stores from parquet STAC files.
+  _store.py          Resolve cloud HREFs into obstore Store instances (or route through a user-supplied store) with a shared cache; store_for() factory for constructing stores from parquet STAC files.
   _temporal.py       Temporal grouping strategies (day, week, month, year, fixed-day-count).
   _mosaic_methods.py Pixel-selection strategies (First, Highest, Lowest, Mean, Median, Stdev, Count).
 ```
@@ -55,7 +55,7 @@ src/lazycogs/
 
 ## Explain: dry-run read estimator
 
-`da.lazycogs.explain()` (registered in `_explain.py` as an xarray accessor) provides an `EXPLAIN ANALYZE`-style dry run. It issues one DuckDB spatial query per `(time step, spatial chunk)` combination — not per band, because the query result is band-independent. Query results are fanned across all active bands in Python, and execution stops before any pixel I/O. All `(time × spatial tile)` queries are dispatched concurrently via `asyncio.gather`; DuckDB itself serialises access on a single connection.
+`da.lazycogs.explain()` (registered in `_explain.py` as an xarray accessor) provides an `EXPLAIN ANALYZE`-style dry run. It issues one DuckDB spatial query per `(time step, spatial chunk)` combination — not per band, because the query result is band-independent. Query results are fanned across all active bands in Python, and execution stops before any pixel I/O. All `(time × spatial tile)` queries are dispatched concurrently via `asyncio.gather`, while DuckDB submission is routed through the same small bounded helper used by backend reads.
 
 ```python
 plan = da.lazycogs.explain()          # DuckDB queries only, no pixel reads
@@ -79,8 +79,8 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 
 `MultiBandStacBackendArray.__getitem__` in `_backend.py`:
 
-1. xarray calls `__getitem__` with an `ExplicitIndexer`. The call is forwarded through `indexing.explicit_indexing_adapter` to `_sync_getitem`, which calls `_run_coroutine(self._async_getitem(key))` with a basic `(int | slice, int | slice, int | slice, int | slice)` key for `(band, time, y, x)`.
-   When the caller is already inside an async event loop (for example, an interactive map running in Jupyter), xarray can dispatch reads via `async_getitem` instead. `async_getitem` calls `indexing.async_explicit_indexing_adapter` with the same `_async_getitem` method, so the sync and async paths share a single source of truth and produce identical results. The only difference is that `async_getitem` stays on the caller's loop and avoids the background-thread overhead of `_run_coroutine`.
+1. xarray calls `__getitem__` with an `ExplicitIndexer`. The call is forwarded through `indexing.explicit_indexing_adapter` to `_sync_getitem`, which calls `run_on_loop(self._async_getitem(key))` with a basic `(int | slice, int | slice, int | slice, int | slice)` key for `(band, time, y, x)`.
+   When the caller is already inside an async event loop (for example, an interactive map running in Jupyter), xarray can dispatch reads via `async_getitem` instead. `async_getitem` calls `indexing.async_explicit_indexing_adapter` with the same `_async_getitem` method, so the sync and async paths share a single source of truth and produce identical results. The only difference is that `async_getitem` stays on the caller's loop and avoids the background-thread overhead of `run_on_loop`.
 2. The band key is resolved to a list of integer band indices. If it was an integer the band dimension is squeezed in the output.
 3. The time key is resolved to a list of integer positions. Integer keys squeeze the time dimension.
 4. Integer y or x keys are normalised to size-1 slices; the dimension is squeezed before returning.
@@ -88,7 +88,7 @@ With `fetch_headers=True`, each matched COG header is fetched (a small HTTP rang
 6. The chunk's affine transform is derived: `chunk_affine = dst_affine * Affine.translation(x_start, y_start_physical)`.
 7. The chunk's EPSG:4326 bounding box is computed from the four corners of the chunk using `_dst_to_4326`, a `pyproj.Transformer` cached on the `MultiBandStacBackendArray` instance at construction time (or `None` when `dst_crs` is already EPSG:4326).
 8. `_async_getitem` drives all time steps via `await _read_chunk_all_dates(...)`. Inside `_read_chunk_all_dates`, an `asyncio.gather` fans out one `_run_one_date` coroutine per time step, so COG reads overlap across dates:
-   a. Each `_run_one_date` calls `await _search_items_async(plan, date)`, which dispatches the DuckDB query to `_DUCKDB_EXECUTOR` via `run_in_executor`. DuckDB serialises access internally, so concurrent queries on the same client are safe but not parallel. Empty results short-circuit to nodata immediately.
+   a. Each `_run_one_date` calls `await _search_items_async(plan, date)`, which dispatches the DuckDB query through a shared bounded `run_duckdb(...)` helper onto the DuckDB executor. DuckDB serialises access internally, so concurrent queries on the same client are safe but not parallel. Empty results short-circuit to nodata immediately.
    b. `read_chunk_async(...)` materialises all selected bands for the time step concurrently.
 9. The result is returned in the same top-down orientation as the COG data.
 
@@ -139,23 +139,19 @@ Nearest-neighbor is the only supported resampling method.
 
 ## Concurrency model
 
-There are four nested layers of concurrency in a chunk read.
+There are two load-bearing concurrency layers in a chunk read, plus dask as an orthogonal scheduler.
 
-**Dask (chunk level).** When a dask-backed DataArray is computed, dask dispatches each chunk task to a worker thread. Each worker thread calls `_sync_getitem()` in `_backend.py`, which calls `_run_coroutine(_async_getitem(...))` to drive all time steps from the persistent per-thread background loop. Worker threads are independent — they share no state except the thread-local store cache in `_store.py` and the thread-local DuckDB clients in `_backend.py`.
+**Dask (optional, chunk level).** When a dask-backed DataArray is computed, dask dispatches chunk tasks to worker threads. Each worker thread calls `_sync_getitem()` in `_backend.py`, which uses `run_on_loop(_async_getitem(...))` to submit the chunk read to lazycogs' shared persistent background loop. Dask controls how many chunk tasks run at once; it does not create extra lazycogs event loops.
 
-**asyncio (time + item level).** A single event loop call (via `_run_coroutine`) handles the entire chunk. Inside `_async_getitem`, `asyncio.gather` fans out one `_run_one_date` coroutine per time step, so all time steps are in flight concurrently within the same event loop. DuckDB queries run on `_DUCKDB_EXECUTOR` (a dedicated two-thread pool) via `run_in_executor`, yielding the event loop during each query. DuckDB's internal mutex serialises actual DB access, so queries are safe but not parallel on a single `DuckdbClient`. Once a query returns, its mosaic coroutine proceeds immediately and COG reads for all time steps overlap in the event loop's I/O layer. Because all time steps share a single event loop and therefore a single bounded reprojection executor, the reprojection thread count stays at `get_max_workers()` regardless of how many time steps are in the chunk (no thread explosion). The `warp_cache` is shared across coroutines: `compute_warp_map` is deterministic, so concurrent writes are safe.
+**One shared asyncio loop (I/O fan-out).** A single background event loop is created lazily and reused for every sync caller. Startup is only considered ready once that loop is actually running, so first-use sync bridge calls do not depend on thread scheduling luck. Inside `_async_getitem`, `asyncio.gather` fans out one `_run_one_date` coroutine per requested time step, and each time step uses `read_chunk_async` to fan out item reads under `asyncio.Semaphore(max_concurrent_reads)`. COG header reads and tile fetches from `async-geotiff` are all awaitable, so the loop multiplexes network I/O without blocking. DuckDB work never runs on the loop thread: `_search_items_async` and `_explain_async` both route queries through `run_duckdb(...)`, a small internal helper that applies a private submission bound before dispatching onto the DuckDB executor. The executor is still bounded (`max_workers=1` today), so DuckDB yields the event loop but still matches the effective single-connection serialization of the current client model. The current local benchmark fixture keeps DuckDB well below the U4 threshold for a separate client pool (1.9% of per-date chunk wall time on a small-bbox / many-time-step workload, 0.2% on a large-bbox / few-time-step workload), so the single-worker executor remains the intended design for now.
 
-**asyncio (item level).** Inside a time step's event loop, `read_chunk_async` launches one `_read_item_band()` task per overlapping item up front, with an `asyncio.Semaphore(max_concurrent_reads)` (configurable via `open()`, default 32) capping how many reads run concurrently. Tasks complete in I/O arrival order, but results are buffered by their original list index and drained into the mosaic in source-list order. This preserves the sort contract for `FirstMethod` — items are fed strictly in the order returned by DuckDB (i.e. the caller's `sortby` order) regardless of which COGs arrive first over the network, while all concurrent I/O remains in flight. COG header reads and tile fetches from `async-geotiff` are all awaitable, so the event loop multiplexes them without blocking. Early exit is preserved: once the mosaic method signals completion, remaining tasks are cancelled in a `finally` block, and items still waiting on the semaphore never start.
+**One bounded reprojection thread pool (CPU work).** `_apply_bands_with_warp_cache` is synchronous CPU-bound work that processes all bands for one item together. `_read_item_band` dispatches it via `loop.run_in_executor(get_reproject_pool(), ...)`, so the event loop stays free while reprojections run on a shared bounded thread pool. The default bound is `min(os.cpu_count() or 1, 4)`, configurable before first use via `LAZYCOGS_REPROJECT_WORKERS`. That environment variable is read once when the pool is first created; later changes are ignored. The `warp_cache` is shared across coroutines; `compute_warp_map` is deterministic, so duplicate concurrent writes are safe.
 
-**Thread pool (CPU work per item).** `_apply_bands_with_warp_cache` is synchronous CPU-bound work that processes all bands for one item together. `_read_item_band` dispatches it via `loop.run_in_executor(None, ...)` — one executor call per item — so the event loop stays free to process other items' tile reads while reprojections run on threads. Because the call is coarse-grained (all bands per item) and GIL-releasing (`pyproj` and numpy both release during heavy inner loops), offloading to the thread pool gives real CPU parallelism without excessive submission overhead.
+**Why threads, not a process pool.** `pyproj.Transformer.transform()` and numpy's fancy-indexing both release the GIL during their heavy inner loops. Threads therefore give real CPU parallelism here without the process-spawn and array-pickling overhead of a `ProcessPoolExecutor`.
 
-**Why threads, not a process pool.** `pyproj.Transformer.transform()` and numpy's fancy-indexing both release the GIL during their heavy inner loops. Threads therefore give real CPU parallelism here — not just interleaving — without the overhead of process spawning and array pickling that a `ProcessPoolExecutor` would require.
+**Why reprojection is memory-bandwidth-bound, not compute-bound.** `compute_warp_map` builds two meshgrids the size of the output chunk, transforms all coordinates in one vectorised call, and produces large index arrays. `apply_warp_map` samples the source array with random-access fancy indexing (`out[:, valid] = data[:, row_idx[valid], col_idx[valid]]`), which produces near-constant cache misses. Both phases are dominated by memory latency and bandwidth rather than arithmetic, so pushing far past 4 threads usually hurts more than it helps.
 
-**Why reprojection is memory-bandwidth-bound, not compute-bound.** `compute_warp_map` builds two meshgrids the size of the output chunk, transforms all coordinates in one vectorised call, and produces large index arrays. `apply_warp_map` samples the source array with random-access fancy indexing (`out[:, valid] = data[:, row_idx[valid], col_idx[valid]]`), which produces near-constant cache misses. Both phases are dominated by memory latency and bandwidth rather than arithmetic. In practice this means CPU utilisation is low (threads stall waiting for memory), and adding more than 4 concurrent reprojection threads provides no throughput benefit — they saturate the memory bus instead.
-
-**Bounded per-loop executor.** Rather than using Python's default `min(32, cpu_count + 4)` thread count, `_get_or_create_background_loop()` installs a bounded `ThreadPoolExecutor` (default `min(os.cpu_count(), 4)`) as the default executor on each background loop it creates, before any coroutines run. This caps thread count per loop while preserving per-loop isolation: each dask task has its own independent pool and does not queue behind other tasks. The executor is shut down when the background loop thread exits. Call `lazycogs.set_reproject_workers(n)` to change the per-loop bound (see `_executor.py`).
-
-**Persistent background loop.** `_run_coroutine()` submits the coroutine to a persistent per-thread background loop via `asyncio.run_coroutine_threadsafe`. The background loop is created by `_get_or_create_background_loop` on the first call from a given thread and reused for all subsequent calls on that same thread. This is the same path whether the caller is a regular Python script, a Jupyter kernel, or a dask worker. The persistent loop is required because `async-geotiff` and `obstore` may fire callbacks after the awaited coroutine returns; a fresh per-call loop would tear down before those callbacks land. Per-thread isolation is preserved: each dask worker thread gets its own independent background loop and executor. One consequence: credential providers that hold event-loop-bound resources (such as `NasaEarthdataAsyncCredentialProvider`, which creates an `aiohttp` session at construction time) fail in this path because the session is bound to a different loop. Use the synchronous credential provider equivalents (e.g. `NasaEarthdataCredentialProvider`) instead.
+**Persistent background loop.** The loop stays alive for the life of the process because `async-geotiff` and `obstore` may fire callbacks after the awaited coroutine returns; a fresh per-call loop would tear down before those callbacks land. Because there is now one shared lazycogs loop, loop-bound resources can be constructed on the right loop with `lazycogs.run_on_loop(...)`. This replaces the old per-thread-loop credential footgun: async credential providers that need an `aiohttp` session should build that session on the lazycogs loop rather than on an arbitrary caller loop.
 
 ## Chunking strategy and throughput tradeoffs
 
@@ -167,7 +163,7 @@ Without spatial chunks, xarray calls `MultiBandStacBackendArray.__getitem__` onc
 
 With spatial chunks (e.g. `chunks={"x": 512, "y": 512}`), dask splits the extent into N tasks. Each task:
 
-- Runs a separate DuckDB query (via `_search_items_async` on `_DUCKDB_EXECUTOR`) to find overlapping items.
+- Runs a separate DuckDB query (via `_search_items_async` on the bounded DuckDB executor) to find overlapping items.
 - Fires a smaller `asyncio.gather` over only the COGs that overlap its sub-region.
 
 The total number of COG reads is the same, but they are spread across N smaller gathers rather than one large one. Dask workers do provide some task-level parallelism, but the overhead of N DuckDB queries and N smaller event loop gathers typically outweighs the benefit, especially for small chunk sizes. A COG that spans multiple spatial chunks is also opened once per overlapping chunk rather than once per time step.
@@ -178,7 +174,7 @@ The async layer already handles spatial I/O concurrency. Dask spatial chunks add
 
 **The time dimension.** Without dask, `_async_getitem()` already parallelises all time steps concurrently within a single chunk read via `asyncio.gather`. Dask adds a second level of time parallelism when the array has more time steps than fit in one chunk: `chunks={"time": N}` lets dask run multiple chunks in parallel across worker threads, each chunk running its own internal gather. For most use cases without dask, the built-in time-step parallelism is sufficient and avoids dask scheduling overhead entirely.
 
-**Band dimension chunking does not help.** Within a single time step, all bands are read together by `_read_item_bands`. Splitting bands into separate dask tasks (`chunks={"band": 1}`) creates the same per-task overhead as spatial chunks (separate DuckDB queries, event loop creation, executor instantiation) without a meaningful parallelism benefit. Keep all bands in a single chunk.
+**Band dimension chunking does not help.** Within a single time step, all bands are read together by `_read_item_bands`. Splitting bands into separate dask tasks (`chunks={"band": 1}`) creates the same per-task overhead as spatial chunks (separate DuckDB queries and gather orchestration) without a meaningful parallelism benefit. Keep all bands in a single chunk.
 
 **Memory pressure** is the other legitimate reason to add spatial chunks. If the full array does not fit in memory, spatial chunking limits how much is materialised at once even if it costs throughput.
 
@@ -250,7 +246,7 @@ mean that requires all weeks to be present before reducing).
 
 `lazycogs.open(..., store=...)` accepts the same store contract that `async-geotiff` consumes. In practice, any object that satisfies `async_geotiff.Store` can be passed through and will be forwarded unchanged to `GeoTIFF.open(...)`.
 
-`resolve()` in `_store.py` remains the default convenience layer. When `store=None`, it defers to `obstore.store.from_url` for scheme detection — including the special-case HTTPS routing for `amazonaws.com`, `r2.cloudflarestorage.com`, and Azure hosts — rather than maintaining its own list of known object-store domains. The constructed obstore-backed store is cached per thread in a `dict[str, ObjectStore]` keyed by root URL (`scheme://netloc`). Because dask tasks run in threads, this avoids repeated connection setup within a single task while remaining safe across concurrent tasks.
+`resolve()` in `_store.py` remains the default convenience layer. When `store=None`, it defers to `obstore.store.from_url` for scheme detection — including the special-case HTTPS routing for `amazonaws.com`, `r2.cloudflarestorage.com`, and Azure hosts — rather than maintaining its own list of known object-store domains. The constructed obstore-backed store is cached in a shared process-local `dict[str, ObjectStore]` keyed by root URL (`scheme://netloc`) behind a small lock. This avoids repeated connection setup while keeping direct threaded callers safe.
 
 No credential defaults are applied; auto-resolved stores are constructed with obstore's own environment-based credential discovery (environment variables, instance metadata, config files, etc.). For public buckets that do not require signed requests, callers pass `skip_signature=True` explicitly. For authenticated access or any non-default configuration, callers may still construct an obstore `ObjectStore` and pass it via `store=`; `resolve()` then returns it unchanged and only extracts the object path from each HREF. No introspection is done on a user-supplied store — the caller is responsible for ensuring it satisfies the `GeoTIFF.open` read contract and is rooted at the same `scheme://netloc` the HREFs point to.
 

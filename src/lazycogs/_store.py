@@ -20,14 +20,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_local = threading.local()
+_STORE_CACHE: dict[str, ObjectStore] = {}
+_STORE_CACHE_LOCK = threading.Lock()
 
 
-def _cache() -> dict[str, ObjectStore]:
-    """Return the thread-local store cache, creating it on first access."""
-    if not hasattr(_local, "stores"):
-        _local.stores = {}
-    return _local.stores
+def _get_cached_store(root_url: str) -> ObjectStore:
+    """Return the cached store for ``root_url``, creating it once."""
+    with _STORE_CACHE_LOCK:
+        store = _STORE_CACHE.get(root_url)
+        if store is None:
+            store = from_url(root_url)
+            _STORE_CACHE[root_url] = store
+        return store
 
 
 def resolve(
@@ -45,8 +49,8 @@ def resolve(
 
     When ``store`` is ``None``, a store is auto-constructed via
     :func:`obstore.store.from_url` using only the ``scheme://netloc`` portion
-    of the HREF and cached per thread. No credential defaults are applied; the
-    store is constructed with obstore's own environment-based credential
+    of the HREF and cached per root URL. No credential defaults are applied;
+    the store is constructed with obstore's own environment-based credential
     discovery. For public buckets, signed URLs, custom endpoints, or
     request-payer buckets, construct the store yourself and pass it via
     ``store`` — see the cloud storage guide for examples.
@@ -82,10 +86,7 @@ def resolve(
         return store, path
 
     root_url = f"{scheme}://{parsed.netloc}" if scheme != "file" else "file:///"
-    cache = _cache()
-    if root_url not in cache:
-        cache[root_url] = from_url(root_url)
-    return cache[root_url], path
+    return _get_cached_store(root_url), path
 
 
 def store_for(

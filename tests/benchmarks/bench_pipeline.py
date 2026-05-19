@@ -7,10 +7,13 @@ Run with:
     uv run pytest tests/benchmarks/ --benchmark-enable --benchmark-save=<name>
 """
 
+import os
+
 import pytest
 
 import lazycogs
-from lazycogs import FirstMethod, MedianMethod, MosaicMethodBase, set_reproject_workers
+from lazycogs import FirstMethod, MedianMethod, MosaicMethodBase
+from tests._executor_test_utils import reset_executor_state_for_tests
 
 from .conftest import (
     BENCHMARK_BBOX,
@@ -88,11 +91,12 @@ def test_reproject_workers(
     """Measure throughput as reprojection thread count varies.
 
     Uses the expanded 12-time-step dataset with ``chunks={"time": 1}`` so dask
-    dispatches many concurrent tasks, putting real pressure on the per-chunk
-    thread pool.  Validates the claim that memory-bandwidth saturation causes
-    diminishing returns above 4 threads.
+    dispatches many concurrent tasks, putting real pressure on the shared
+    reprojection pool. Validates the claim that memory-bandwidth saturation
+    causes diminishing returns above 4 threads.
     """
-    set_reproject_workers(n_workers)
+    os.environ["LAZYCOGS_REPROJECT_WORKERS"] = str(n_workers)
+    reset_executor_state_for_tests()
 
     def run() -> object:
         da = lazycogs.open(
@@ -109,7 +113,8 @@ def test_reproject_workers(
         benchmark(run)
     finally:
         # Reset to default so other benchmarks are not affected.
-        set_reproject_workers(min(__import__("os").cpu_count() or 4, 4))
+        os.environ.pop("LAZYCOGS_REPROJECT_WORKERS", None)
+        reset_executor_state_for_tests()
 
 
 @pytest.mark.benchmark

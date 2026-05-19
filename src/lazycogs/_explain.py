@@ -15,7 +15,7 @@ from pandas import DataFrame
 from pyproj import CRS, Transformer
 
 from lazycogs._chunk_reader import _ChunkContext, _open_and_window
-from lazycogs._executor import _DUCKDB_EXECUTOR, _run_coroutine
+from lazycogs._executor import run_duckdb, run_on_loop
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -601,17 +601,14 @@ async def _explain_async(
             actual_h,
             dst_crs,
         )
-        loop = asyncio.get_running_loop()
-        items = await loop.run_in_executor(
-            _DUCKDB_EXECUTOR,
-            lambda: backend.duckdb_client.search(
-                backend.parquet_path,
-                bbox=chunk_bbox_4326,
-                datetime=date_filter,
-                sortby=backend.sortby,
-                filter=backend.filter,
-                ids=backend.ids,
-            ),
+        items = await run_duckdb(
+            backend.duckdb_client.search,
+            backend.parquet_path,
+            bbox=chunk_bbox_4326,
+            datetime=date_filter,
+            sortby=backend.sortby,
+            filter=backend.filter,
+            ids=backend.ids,
         )
         logger.debug(
             "explain date=%s chunk=(%d,%d) -> %d items (for %d band(s))",
@@ -707,7 +704,7 @@ async def _explain_async(
 class StacCogAccessor:
     """xarray accessor adding explain functionality to lazycogs DataArrays.
 
-    Registered as the ``stac_cog`` namespace on all ``xr.DataArray`` objects.
+    Registered as the ``lazycogs`` namespace on all ``xr.DataArray`` objects.
     The :meth:`explain` method is only useful on DataArrays produced by
     :func:`lazycogs.open`.
 
@@ -749,9 +746,9 @@ class StacCogAccessor:
         backend: MultiBandStacBackendArray | None = self._da.attrs.get("_stac_backend")
         if backend is None:
             raise ValueError(
-                "This DataArray does not have stac_cog explain metadata. "
+                "This DataArray does not have lazycogs explain metadata. "
                 "Ensure it was created by lazycogs.open().",
             )
-        return _run_coroutine(
+        return run_on_loop(
             _explain_async(self._da, backend, fetch_headers=fetch_headers),
         )

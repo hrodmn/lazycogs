@@ -1,4 +1,4 @@
-"""Thread pool and event loop configuration for reprojection and DuckDB work."""
+"""Event loop and executor ownership for lazycogs background work."""
 
 from __future__ import annotations
 
@@ -6,23 +6,26 @@ import asyncio
 import concurrent.futures
 import os
 import threading
+import weakref
+from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from asyncio.futures import Future
-    from types import CoroutineType
+    from collections.abc import Callable, Coroutine
 
-config: dict[str, int | None] = {"max_workers": None}
+_REPROJECT_WORKERS_ENV = "LAZYCOGS_REPROJECT_WORKERS"
+_DUCKDB_MAX_WORKERS = 1
+_DUCKDB_MAX_SUBMISSIONS = 2
 
-_tls = threading.local()
-
-# DuckDB queries serialise on a single connection, so a small pool is enough.
-# Kept separate from the reprojection executor so a long reprojection cannot
-# starve a queued query within the same chunk read.
-_DUCKDB_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=2,
-    thread_name_prefix="lazycogs-duckdb",
-)
+_LOOP: asyncio.AbstractEventLoop | None = None
+_LOOP_THREAD: threading.Thread | None = None
+_REPROJECT_POOL: concurrent.futures.ThreadPoolExecutor | None = None
+_DUCKDB_POOL: concurrent.futures.ThreadPoolExecutor | None = None
+_DUCKDB_SUBMISSION_GATES: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop,
+    asyncio.Semaphore,
+] = weakref.WeakKeyDictionary()
+_LOCK = threading.Lock()
 
 
 def _default_workers() -> int:
@@ -33,96 +36,139 @@ def _default_workers() -> int:
     saturate the memory bus rather than adding CPU throughput. Keep the default
     conservative.
     """
-    return min(os.cpu_count() or 4, 4)
+    return min(os.cpu_count() or 1, 4)
 
 
-def get_max_workers() -> int:
-    """Return the configured worker count, or the default if not set.
+def _reproject_worker_count() -> int:
+    """Return the configured reprojection worker count."""
+    value = os.getenv(_REPROJECT_WORKERS_ENV)
+    if value is None:
+        return _default_workers()
 
-    Returns:
-        Number of reprojection threads each event loop will use.
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_REPROJECT_WORKERS_ENV} must be an integer, got {value!r}",
+        ) from exc
 
-    """
-    val = config["max_workers"]
-    return val if val is not None else _default_workers()
-
-
-def set_reproject_workers(n: int) -> None:
-    """Set the number of threads each thread's event loop uses for reprojection.
-
-    Each thread (dask worker, Jupyter kernel callback thread, etc.) gets one
-    persistent background event loop with one bounded reprojection
-    ``ThreadPoolExecutor``.  All chunk reads on that thread share the same loop
-    and executor.  Dask tasks on different threads do not compete for a shared
-    pool.  Total reprojection threads at any moment is at most
-    ``n x active_thread_count``.
-
-    Reprojection is memory-bandwidth-bound rather than compute-bound, so values
-    above 4 typically offer no benefit and can hurt throughput due to memory
-    contention. The default is ``min(os.cpu_count(), 4)``.
-
-    To improve overall throughput, prefer adding time or band parallelism via
-    dask (``chunks={"time": 1}``) over raising this value.
-
-    Args:
-        n: Number of worker threads per event loop.  Must be >= 1.
-
-    Raises:
-        ValueError: If ``n`` is less than 1.
-
-    """
-    if n < 1:
-        raise ValueError(f"n must be >= 1, got {n!r}")
-    config["max_workers"] = n
+    if parsed < 1:
+        raise ValueError(f"worker count must be >= 1, got {parsed!r}")
+    return parsed
 
 
-def _get_or_create_background_loop() -> asyncio.AbstractEventLoop:
-    """Return the persistent background event loop for the current thread.
-
-    Creates the loop, its bounded reprojection executor, and its daemon runner
-    thread on first call from a given thread.  Subsequent calls on the same
-    thread return the cached loop immediately.
-
-    The loop is stored on ``threading.local`` so each thread (each dask worker,
-    each Jupyter kernel callback thread) has its own independent loop and
-    executor — tasks on different threads do not share a pool.
-
-    Using a persistent loop (rather than a fresh one per call) ensures that
-    any in-flight callbacks from ``async_geotiff``/``obstore`` background
-    threads can always be delivered, avoiding ``RuntimeError: Event loop is
-    closed`` errors from callbacks that fire after a fresh loop is torn down.
-    """
-    loop: asyncio.AbstractEventLoop | None = getattr(_tls, "loop", None)
-    if loop is not None and loop.is_running():
-        return loop
-
+def _start_background_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    """Create and start the shared background event loop."""
     loop = asyncio.new_event_loop()
-    loop.set_default_executor(
-        concurrent.futures.ThreadPoolExecutor(
-            max_workers=get_max_workers(),
-            thread_name_prefix="lazycogs-reproject",
-        ),
-    )
-    t = threading.Thread(target=loop.run_forever, daemon=True, name="lazycogs-loop")
-    t.start()
-    _tls.loop = loop
-    return loop
+    ready = threading.Event()
+
+    def _run() -> None:
+        asyncio.set_event_loop(loop)
+        loop.call_soon(ready.set)
+        loop.run_forever()
+
+    thread = threading.Thread(target=_run, daemon=True, name="lazycogs-loop")
+    thread.start()
+    ready.wait()
+    return loop, thread
 
 
-def _run_coroutine(coro: CoroutineType) -> Future:
-    """Run an async coroutine from sync code.
+def _ensure_loop() -> asyncio.AbstractEventLoop:
+    """Return the shared background event loop, starting it lazily."""
+    global _LOOP, _LOOP_THREAD
 
-    Submits the coroutine to a persistent per-thread background event loop,
-    blocking until it completes.  The background loop is created on the first
-    call from a given thread (dask worker, Jupyter kernel thread, etc.) and
-    reused for all subsequent calls on that same thread.
+    with _LOCK:
+        if (
+            _LOOP is not None
+            and _LOOP_THREAD is not None
+            and _LOOP_THREAD.is_alive()
+            and _LOOP.is_running()
+            and not _LOOP.is_closed()
+        ):
+            return _LOOP
 
-    Args:
-        coro: The coroutine to execute.
+        _LOOP, _LOOP_THREAD = _start_background_loop()
+        return _LOOP
 
-    Returns:
-        The return value of the coroutine.
 
+def get_reproject_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the shared bounded reprojection executor."""
+    global _REPROJECT_POOL  # noqa: PLW0603
+
+    with _LOCK:
+        if _REPROJECT_POOL is None:
+            _REPROJECT_POOL = concurrent.futures.ThreadPoolExecutor(
+                max_workers=_reproject_worker_count(),
+                thread_name_prefix="lazycogs-reproject",
+            )
+        return _REPROJECT_POOL
+
+
+def get_duckdb_pool() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the shared bounded DuckDB executor."""
+    global _DUCKDB_POOL  # noqa: PLW0603
+
+    with _LOCK:
+        if _DUCKDB_POOL is None:
+            _DUCKDB_POOL = concurrent.futures.ThreadPoolExecutor(
+                max_workers=_DUCKDB_MAX_WORKERS,
+                thread_name_prefix="lazycogs-duckdb",
+            )
+        return _DUCKDB_POOL
+
+
+def _duckdb_submission_gate() -> asyncio.Semaphore:
+    """Return the private per-loop gate for DuckDB submissions."""
+    loop = asyncio.get_running_loop()
+    with _LOCK:
+        gate = _DUCKDB_SUBMISSION_GATES.get(loop)
+        if gate is None:
+            gate = asyncio.Semaphore(_DUCKDB_MAX_SUBMISSIONS)
+            _DUCKDB_SUBMISSION_GATES[loop] = gate
+        return gate
+
+
+async def run_duckdb[**P, T](
+    func: Callable[P, T],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Run blocking DuckDB work on the shared bounded executor.
+
+    Submission is gated per event loop to keep the executor queue small while
+    still yielding the caller's loop during the blocking query.
     """
-    loop = _get_or_create_background_loop()
-    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+    loop = asyncio.get_running_loop()
+    async with _duckdb_submission_gate():
+        return await loop.run_in_executor(
+            get_duckdb_pool(),
+            partial(func, *args, **kwargs),
+        )
+
+
+def _submit_to_loop[T](
+    coro: Coroutine[object, object, T],
+) -> concurrent.futures.Future[T]:
+    """Submit a coroutine to the shared background loop."""
+    loop = _ensure_loop()
+    thread = _LOOP_THREAD
+    if thread is None or not thread.is_alive() or not loop.is_running():
+        coro.close()
+        raise RuntimeError("lazycogs background event loop is not running")
+    if thread.ident == threading.get_ident():
+        coro.close()
+        raise RuntimeError(
+            "Cannot call sync lazycogs bridge from the lazycogs event loop thread. "
+            "Await the async API directly instead.",
+        )
+    return asyncio.run_coroutine_threadsafe(coro, loop)
+
+
+def run_on_loop[T](coro: Coroutine[object, object, T]) -> T:
+    """Run ``coro`` on the shared lazycogs event loop and return its result.
+
+    This is the supported helper for sync code that must execute a coroutine on
+    the lazycogs background loop, including callers that need to construct
+    loop-bound resources on that loop.
+    """
+    return _submit_to_loop(coro).result()

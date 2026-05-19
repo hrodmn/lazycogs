@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +15,8 @@ from lazycogs._storage_ext import (
     _storage_extension_version,
 )
 from lazycogs._store import resolve, store_for
+
+pytestmark = pytest.mark.usefixtures("clear_store_cache")
 
 
 class _ProtocolStore:
@@ -67,25 +70,38 @@ def test_unsupported_scheme_raises():
         resolve("ftp://server/file.tif")
 
 
-def test_thread_local_cache_same_bucket():
+def test_shared_cache_same_bucket():
     """Two HREFs in the same bucket return the same store object."""
     store_a, _ = resolve("s3://shared-bucket/file1.tif")
     store_b, _ = resolve("s3://shared-bucket/file2.tif")
     assert store_a is store_b
 
 
-def test_thread_local_cache_different_buckets():
+def test_shared_cache_different_buckets():
     """HREFs in different buckets return distinct store objects."""
     store_a, _ = resolve("s3://bucket-one/file.tif")
     store_b, _ = resolve("s3://bucket-two/file.tif")
     assert store_a is not store_b
 
 
-def test_thread_local_cache_same_https_host():
+def test_shared_cache_same_https_host():
     """Two HTTPS HREFs on the same host share a store."""
     store_a, _ = resolve("https://cdn.example.com/img/a.tif")
     store_b, _ = resolve("https://cdn.example.com/img/b.tif")
     assert store_a is store_b
+
+
+def test_shared_cache_is_thread_safe():
+    """Concurrent callers reuse the same cached store instance."""
+
+    def resolve_store():
+        store, _ = resolve("s3://shared-bucket/thread-safe.tif")
+        return store
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        stores = list(executor.map(lambda _: resolve_store(), range(16)))
+
+    assert len({id(store) for store in stores}) == 1
 
 
 def test_user_supplied_store_is_returned_unchanged():

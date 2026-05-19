@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 from affine import Affine
 from pyproj import CRS
 
@@ -16,7 +17,19 @@ from lazycogs._chunk_reader import (
     _select_overview,
     read_chunk_async,
 )
+from lazycogs._executor import get_reproject_pool
 from lazycogs._mosaic_methods import FirstMethod
+from tests._executor_test_utils import reset_executor_state_for_tests
+
+
+@pytest.fixture(autouse=True)
+def reset_executor_state(monkeypatch):
+    """Reset shared executor state between tests."""
+    monkeypatch.delenv("LAZYCOGS_REPROJECT_WORKERS", raising=False)
+    reset_executor_state_for_tests()
+    yield
+    reset_executor_state_for_tests()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -478,3 +491,21 @@ def test_read_chunk_async_early_exit():
     # at max_concurrent_reads.  Once every band's FirstMethod is satisfied,
     # pending tasks are cancelled, so strictly fewer than n_items reads execute.
     assert reads_executed[0] < n_items
+
+
+# ---------------------------------------------------------------------------
+# Executor configuration
+# ---------------------------------------------------------------------------
+
+
+def test_reproject_pool_uses_env_var(monkeypatch):
+    """The reprojection pool reads LAZYCOGS_REPROJECT_WORKERS lazily."""
+    monkeypatch.setenv("LAZYCOGS_REPROJECT_WORKERS", "2")
+    assert get_reproject_pool()._max_workers == 2
+
+
+def test_reproject_pool_rejects_invalid_env_var(monkeypatch):
+    """Invalid LAZYCOGS_REPROJECT_WORKERS values raise clearly."""
+    monkeypatch.setenv("LAZYCOGS_REPROJECT_WORKERS", "not-an-int")
+    with pytest.raises(ValueError, match="must be an integer"):
+        get_reproject_pool()

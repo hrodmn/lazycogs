@@ -4,7 +4,7 @@
 
 ::: lazycogs.store_for
 
-::: lazycogs.set_reproject_workers
+::: lazycogs.run_on_loop
 
 ::: lazycogs.ExplainPlan
 
