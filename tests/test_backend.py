@@ -1,6 +1,7 @@
 """Tests for _backend helpers and _async_getitem / _sync_getitem."""
 
 import asyncio
+import concurrent.futures
 import threading
 from unittest.mock import AsyncMock, patch
 
@@ -11,8 +12,9 @@ from pyproj import CRS
 from rustac import DuckdbClient
 from xarray.core import indexing
 
+from lazycogs import _executor
 from lazycogs._backend import MultiBandStacBackendArray
-from lazycogs._executor import run_on_loop
+from lazycogs._executor import run_duckdb, run_on_loop
 from lazycogs._mosaic_methods import FirstMethod
 from tests._executor_test_utils import reset_executor_state_for_tests
 
@@ -323,6 +325,88 @@ def test_async_getitem_concurrent_chunk_reads(wgs84):
 # ---------------------------------------------------------------------------
 # lazycogs._executor bridge behavior
 # ---------------------------------------------------------------------------
+
+
+def test_sync_getitem_routes_duckdb_queries_through_helper(wgs84):
+    """Chunk reads route DuckDB work through the shared helper."""
+    arr = _make_array(wgs84)
+
+    with patch(
+        "lazycogs._backend.run_duckdb",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as mock_run_duckdb:
+        result = arr._sync_getitem(
+            (slice(0, 1), slice(0, 1), slice(0, 1), slice(0, 4)),
+        )
+
+    assert result.shape == (1, 1, 1, 4)
+    np.testing.assert_array_equal(result, -9999.0)
+    mock_run_duckdb.assert_awaited_once()
+
+
+def test_run_on_loop_first_use_is_deterministic():
+    """Reset plus immediate first use consistently succeeds."""
+    for _ in range(12):
+        reset_executor_state_for_tests()
+        assert run_on_loop(asyncio.sleep(0, result="ok")) == "ok"
+
+
+def test_run_duckdb_bounds_concurrent_submissions():
+    """DuckDB helper applies private submission backpressure per event loop."""
+    release = threading.Event()
+    reached_limit = threading.Event()
+    overflow = threading.Event()
+    state = {"running": 0, "max": 0}
+    state_lock = threading.Lock()
+
+    def blocking_call() -> str:
+        with state_lock:
+            state["running"] += 1
+            state["max"] = max(state["max"], state["running"])
+            if state["running"] == _executor._DUCKDB_MAX_SUBMISSIONS:
+                reached_limit.set()
+            if state["running"] > _executor._DUCKDB_MAX_SUBMISSIONS:
+                overflow.set()
+        release.wait(timeout=5)
+        with state_lock:
+            state["running"] -= 1
+        return "ok"
+
+    async def _exercise() -> list[str]:
+        with (
+            concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool,
+            patch("lazycogs._executor.get_duckdb_pool", return_value=pool),
+        ):
+            tasks = [asyncio.create_task(run_duckdb(blocking_call)) for _ in range(5)]
+            try:
+                assert await asyncio.to_thread(reached_limit.wait, 5)
+                assert not overflow.is_set()
+            finally:
+                release.set()
+            return await asyncio.gather(*tasks)
+
+    assert asyncio.run(_exercise()) == ["ok"] * 5
+    assert state["max"] == _executor._DUCKDB_MAX_SUBMISSIONS
+
+
+def test_run_duckdb_releases_submission_slot_after_error():
+    """DuckDB helper releases its slot even when the callable raises."""
+
+    def fail() -> None:
+        raise RuntimeError("boom")
+
+    async def _exercise() -> str:
+        with (
+            concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool,
+            patch("lazycogs._executor.get_duckdb_pool", return_value=pool),
+            patch.object(_executor, "_DUCKDB_MAX_SUBMISSIONS", 1),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                await run_duckdb(fail)
+            return await run_duckdb(lambda: "ok")
+
+    assert asyncio.run(_exercise()) == "ok"
 
 
 def test_run_on_loop_uses_one_shared_loop_thread():

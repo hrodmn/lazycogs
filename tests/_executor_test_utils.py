@@ -28,6 +28,7 @@ def reset_executor_state_for_tests() -> None:
         _executor._LOOP_THREAD = None
         _executor._REPROJECT_POOL = None
         _executor._DUCKDB_POOL = None
+        _executor._DUCKDB_SUBMISSION_GATES.clear()
 
     if loop is not None and loop.is_running():
         future = asyncio.run_coroutine_threadsafe(_cancel_loop_tasks(), loop)

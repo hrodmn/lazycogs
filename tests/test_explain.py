@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
@@ -82,7 +82,7 @@ def _make_da_with_backends(
     height: int = 10,
     affine: Affine | None = None,
 ) -> xr.DataArray:
-    """Return a minimal DataArray with stac_cog explain attrs attached."""
+    """Return a minimal DataArray with lazycogs explain attrs attached."""
     if affine is None:
         resolution = 1.0
         affine = Affine(resolution, 0.0, 0.0, 0.0, -resolution, float(height))
@@ -459,6 +459,31 @@ def test_accessor_raises_on_non_stac_da():
     da = xr.DataArray(np.zeros((3, 3)))
     with pytest.raises(ValueError, match=r"lazycogs\.open"):
         da.lazycogs.explain()
+
+
+def test_accessor_explain_routes_duckdb_queries_through_helper(wgs84):
+    """explain() routes DuckDB work through the shared helper."""
+    dates = ["2023-01-01/2023-01-01", "2023-01-02/2023-01-02"]
+    time_coords = [np.datetime64("2023-01-01", "D"), np.datetime64("2023-01-02", "D")]
+    da = _make_da_with_backends(
+        wgs84,
+        dates=dates,
+        time_coords=time_coords,
+        bands=["red"],
+        width=4,
+        height=4,
+    )
+
+    with patch(
+        "lazycogs._explain.run_duckdb",
+        new_callable=AsyncMock,
+        return_value=_fake_items("red", 2),
+    ) as mock_run_duckdb:
+        plan = da.lazycogs.explain()
+
+    assert plan.total_chunk_reads == 2
+    assert plan.total_cog_reads == 4
+    assert mock_run_duckdb.await_count == 2
 
 
 def test_accessor_explain_returns_plan(wgs84):

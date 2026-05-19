@@ -16,7 +16,7 @@ from xarray.core import indexing
 
 from lazycogs._chunk_reader import read_chunk_async
 from lazycogs._cql2 import _extract_filter_fields, _sortby_fields
-from lazycogs._executor import get_duckdb_pool, run_on_loop
+from lazycogs._executor import run_duckdb, run_on_loop
 
 logger = logging.getLogger(__name__)
 
@@ -221,8 +221,7 @@ async def _search_items_async(
         List of STAC items returned by DuckDB.
 
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(get_duckdb_pool(), _search_items_sync, plan, date)
+    return await run_duckdb(_search_items_sync, plan, date)
 
 
 async def _run_one_date(
@@ -337,7 +336,7 @@ class MultiBandStacBackendArray(BackendArray):
         store: Pre-configured :class:`async_geotiff.Store` accepted by
             ``GeoTIFF.open`` and shared across all chunk reads. When ``None``,
             each asset HREF is resolved to an obstore-backed store via the
-            thread-local cache in :func:`~lazycogs._store.resolve`.
+            shared process-local cache in :func:`~lazycogs._store.resolve`.
         max_concurrent_reads: Maximum number of COG reads to run concurrently
             per chunk.  Limits peak in-flight memory when a chunk overlaps
             many items.  Defaults to 32.

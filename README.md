@@ -111,10 +111,11 @@ For most users, the recommended path is still obstore: leave `store=None` to aut
   `LAZYCOGS_REPROJECT_WORKERS` before first use to change the default
   `min(os.cpu_count() or 1, 4)` limit. The value is read when the pool is
   first created; changes after that are ignored for the life of the process.
-- DuckDB queries yield the event loop by running on a small explicit
-  executor instead of on the loop thread. On the local benchmark fixture,
-  DuckDB stayed under 2% of per-date chunk wall time, so there is no
-  separate per-thread DuckDB client pool today.
+- DuckDB queries yield the event loop by running through one small bounded
+  internal submission path and explicit executor instead of on the loop
+  thread. On the local benchmark fixture, DuckDB stayed under 2% of
+  per-date chunk wall time, so there is no separate per-thread DuckDB
+  client pool today.
 - If you need to construct a loop-bound resource for lazycogs internals,
   use `lazycogs.run_on_loop(...)`.
 - Low-level callers should use `await lazycogs.read_chunk_async(...)`.

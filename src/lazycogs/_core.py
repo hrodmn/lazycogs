@@ -524,7 +524,7 @@ def open(  # noqa: A001
             credentials, custom endpoints, or non-default options are needed
             without relying on automatic store resolution from each HREF. When
             ``None`` (default), each asset URL is parsed to create or reuse a
-            per-thread cached obstore-backed store.
+            shared cached obstore-backed store behind a small lock.
         max_concurrent_reads: Maximum number of COG reads to run concurrently
             per chunk.  Concurrency is bounded to this size with an
             ``asyncio.Semaphore``, which bounds peak in-flight memory when a

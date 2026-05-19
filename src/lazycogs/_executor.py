@@ -6,18 +6,25 @@ import asyncio
 import concurrent.futures
 import os
 import threading
+import weakref
+from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Callable, Coroutine
 
 _REPROJECT_WORKERS_ENV = "LAZYCOGS_REPROJECT_WORKERS"
 _DUCKDB_MAX_WORKERS = 1
+_DUCKDB_MAX_SUBMISSIONS = 2
 
 _LOOP: asyncio.AbstractEventLoop | None = None
 _LOOP_THREAD: threading.Thread | None = None
 _REPROJECT_POOL: concurrent.futures.ThreadPoolExecutor | None = None
 _DUCKDB_POOL: concurrent.futures.ThreadPoolExecutor | None = None
+_DUCKDB_SUBMISSION_GATES: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop,
+    asyncio.Semaphore,
+] = weakref.WeakKeyDictionary()
 _LOCK = threading.Lock()
 
 
@@ -57,7 +64,7 @@ def _start_background_loop() -> tuple[asyncio.AbstractEventLoop, threading.Threa
 
     def _run() -> None:
         asyncio.set_event_loop(loop)
-        ready.set()
+        loop.call_soon(ready.set)
         loop.run_forever()
 
     thread = threading.Thread(target=_run, daemon=True, name="lazycogs-loop")
@@ -108,6 +115,35 @@ def get_duckdb_pool() -> concurrent.futures.ThreadPoolExecutor:
                 thread_name_prefix="lazycogs-duckdb",
             )
         return _DUCKDB_POOL
+
+
+def _duckdb_submission_gate() -> asyncio.Semaphore:
+    """Return the private per-loop gate for DuckDB submissions."""
+    loop = asyncio.get_running_loop()
+    with _LOCK:
+        gate = _DUCKDB_SUBMISSION_GATES.get(loop)
+        if gate is None:
+            gate = asyncio.Semaphore(_DUCKDB_MAX_SUBMISSIONS)
+            _DUCKDB_SUBMISSION_GATES[loop] = gate
+        return gate
+
+
+async def run_duckdb[**P, T](
+    func: Callable[P, T],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Run blocking DuckDB work on the shared bounded executor.
+
+    Submission is gated per event loop to keep the executor queue small while
+    still yielding the caller's loop during the blocking query.
+    """
+    loop = asyncio.get_running_loop()
+    async with _duckdb_submission_gate():
+        return await loop.run_in_executor(
+            get_duckdb_pool(),
+            partial(func, *args, **kwargs),
+        )
 
 
 def _submit_to_loop[T](
